@@ -1,0 +1,5 @@
+Memory Acess Controller (MAC)
+This module is to interface with sram, dealing with requests coming from MAI and changing the protocol to bank, row, col. 
+
+[1] ORGFXSoC-master/orpsocv2/boards/xilinx/ml501/rtl/verilog/xilinx_ssram.v
+[2] MT48LC2M32B2-512K x 32 x 4banks, Micro. 
