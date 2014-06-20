@@ -9,11 +9,13 @@
 `define LOAD_MODE_CMD 3'b101
 `define LOAD_REG1_CMD 3'b110
 `define LOAD_REG2_CMD 3'b111
-
+`define REQWR_INFO_W  45
 
 module memory_access_controller(
 clk, 
 resetn,
+sclk,
+sresetn,
 iMAC_ValidRd,
 iMAC_AddrRd,
 iMAC_TagRd,
@@ -52,6 +54,8 @@ parameter REQ_FETCH_DATA = 3'b010;
 parameter REQ_LAST_DATA  = 3'b100;
 input    clk;
 input    resetn;
+input    sclk;
+input    sresetn;
 input    iMAC_ValidRd;
 input    iMAC_AddrRd;
 input    iMAC_TagRd;
@@ -116,6 +120,8 @@ reg          oRasn;
 reg          oCasn;
 reg          oWen;
 reg  [3:0]   oDqm;
+
+
 
 assign      oMAC_ReadyWr = ~wFull0;
 assign      oMAC_ReadyRd = ~wFull2;
@@ -243,8 +249,149 @@ always @(posedge clk or negedge resetn) begin
         endcase
     end 
 end 
+//FIXME : adding a register to control, read and write swithing number
+always @(posedge clk or negedge resetn) begin 
+    if (~resetn) begin 
+        rRoundRobin <= 2'b00;
+        rRd0        <= 1'b0;
+        rRd2        <= 1'b0;
+        rLoS        <= 1'b0; //Write Queue in default - Store->1'b0
+    end else begin 
+        if (~wEmpty0 & wEmpty2 & rRoundRobin ==2'b00) begin 
+            rRoundRobin <= 2'b01;
+            rRd0        <= 1'b1;
+            rRd2        <= 1'b0;
+            rLoS        <= 1'b0; //Write Queue - Store->1'b0
+        end else if (wEmpty0 & ~wEmpty2 & rRoundRobin == 2'b00) begin 
+            rRoundRobin <= 2'b10;
+            rRd0        <= 1'b0;
+            rRd2        <= 1'b1;
+            rLoS        <= 1'b1; //Read Queue - Load->1'b0
+        end else if (~wEmpty0 &rRoundRobin == 2'b10 ) begin 
+            rRoundRobin <= 2'b01;
+            rRd0        <= 1'b1;
+            rRd2        <= 1'b0;
+            rLoS        <= 1'b0; //Write Queue - Load->1'b0
+        end else if (~wEmpty0 &wEmpty2 &rRoundRobin == 2'b01 ) begin 
+            rRoundRobin <= 2'b01;
+            rRd0        <= 1'b1;
+            rRd2        <= 1'b0;
+            rLoS        <= 1'b0; //Write Queue - Load->1'b0
+        end else if (~wEmpty2 &rRoundRobin == 2'b01) begin 
+            rRoundRobin <= 2'b10;
+            rRd0        <= 1'b0;
+            rRd2        <= 1'b1;
+            rLoS        <= 1'b1; //Read Queue - Load->1'b0
+        end else if (wEmpty0 & ~wEmpty2 &rRoundRobin == 2'b10) begin 
+            rRoundRobin <= 2'b10;
+            rRd0        <= 1'b0;
+            rRd2        <= 1'b1;
+            rLoS        <= 1'b1; //Read Queue - Load->1'b0
+        end else begin 
+            rRoundRobin <= 2'b00;
+            rRd0        <= 1'b0;
+            rRd2        <= 1'b0;
+            rLoS        <= 1'b0; //Write Queue in default - Store->1'b0
+        end 
+    end 
+end  
 
+always @(posedge clk or negedge resetn) begin 
+    if(~resetn) begin 
+        rSelBank0  <= 1'b0;
+        rSelBank1  <= 1'b0;
+        rSelBank2  <= 1'b0;
+        rSelBank3  <= 1'b0;
+        ppLoS      <= 1'b0;
+        ppReqQItem <= 45'b0;
+    end else begin 
+        ppLoS          <= rLos;
+        ppReqQItem     <= wReqQItem;
+        if(wReqQItem[`BANK_RANGE] == 2'b00) begin 
+            rSelBank0  <= 1'b1;
+            rSelBank1  <= 1'b0;
+            rSelBank2  <= 1'b0;
+            rSelBank3  <= 1'b0;
+        end else if (wReqQItem[`BANK_RANGE] == 2'b01) begin 
+            rSelBank0  <= 1'b0;
+            rSelBank1  <= 1'b1;
+            rSelBank2  <= 1'b0;
+            rSelBank3  <= 1'b0;
+        end else if (wReqQItem[`BANK_RANGE] == 2'b10) begin 
+            rSelBank0  <= 1'b0;
+            rSelBank1  <= 1'b0;
+            rSelBank2  <= 1'b1;
+            rSelBank3  <= 1'b0;
+        end else if (wReqQItem[`BANK_RANGE] == 2'b11) begin 
+            rSelBank0  <= 1'b0;
+            rSelBank1  <= 1'b0;
+            rSelBank2  <= 1'b0;
+            rSelBank3  <= 1'b1;
+        end else begin 
+            rSelBank0  <= 1'b0;
+            rSelBank1  <= 1'b0;
+            rSelBank2  <= 1'b0;
+            rSelBank3  <= 1'b0;
+        end 
+    end 
+end 
 
+mux_4 #(.DATA_WIDTH(45)) muxFourA (
+  .iZeroBranch(45'b0),
+  .iOneBranch(wRdData0),
+  .iTwoBranch(wRdData2),
+  .iThreeBranch(45'b0),
+  .iSel(rRoundRobin),
+  .oMux(wReqQItem)
+);
+
+reorder_processor ROP_Bank0 (
+  .clk(clk),
+  .resetn(resetn),
+  .iReqItem(ppReqQItem),
+  .iLoS(ppLoS),
+  .iValid(rSelBank0),
+  .iROB_Rd(rROB_Rd),
+  .oROB_Item(wItemBank0),
+  .oROB_Full(wROB_Full0),
+  .oROB_Empty(wROB_Empty0)
+);
+
+reorder_processor ROP_Bank1 (
+  .clk(clk),
+  .resetn(resetn),
+  .iReqItem(ppReqQItem),
+  .iLoS(ppLoS),
+  .iValid(rSelBank1),
+  .iROB_Rd(rROB_Rd),
+  .oROB_Item(wItemBank1),
+  .oROB_Full(wROB_Full0),
+  .oROB_Empty(wROB_Empty0)
+);
+
+reorder_processor ROP_Bank2 (
+  .clk(clk),
+  .resetn(resetn),
+  .iReqItem(ppReqQItem),
+  .iLoS(ppLoS),
+  .iValid(rSelBank2),
+  .iROB_Rd(rROB_Rd),
+  .oROB_Item(wItemBank2),
+  .oROB_Full(wROB_Full2),
+  .oROB_Empty(wROB_Empty2)
+);
+
+reorder_processor ROP_Bank3 (
+  .clk(clk),
+  .resetn(resetn),
+  .iReqItem(ppReqQItem),
+  .iLoS(ppLoS),
+  .iValid(rSelBank3),
+  .iROB_Rd(rROB_Rd),
+  .oROB_Item(rItemBank3),
+  .oROB_Full(wROB_Full3),
+  .oROB_Empty(wROB_Empty3)
+);
 
 fifo #(.DSIZE(45), .ASIZE(5) ) wrReqQueue (
   .wclk(clk), 
@@ -254,7 +401,7 @@ fifo #(.DSIZE(45), .ASIZE(5) ) wrReqQueue (
   .rrst_n(resetn),
   .rd(rRd0),
   .wdata(rWrData0),
-  .rdata(rRdData0),
+  .rdata(wRdData0),
   .wfull(wFull0),
   .rempty(wEmpty0)
 );
@@ -278,11 +425,176 @@ fifo #(.DSIZE(45), .ASIZE(5) ) rdReqQueue (
   .rrst_n(resetn),
   .rd(rRd2),
   .wdata(rWrData2),
-  .rdata(rRdData2),
+  .rdata(wRdData2),
   .wfull(wFull2),
   .rempty(wEmpty2)
 );
 
+fifo #(.DSIZE(15), .ASIZE(7) ) inOrderBuffer (
+  .wclk(clk), 
+  .wrst_n(resetn),
+  .wr(rWr2),
+  .rclk(sclk),
+  .rrst_n(sresetn),
+  .rd(rRd4),
+  .wdata(rWrData4),
+  .rdata(wRdData4),
+  .wfull(wFull4),
+  .rempty(wEmpty4)
+);
 
+
+endmodule 
+
+`define ROB_ITEM_W 24
+`define ROW_W      11
+`define BANK_W     2
+`defien COL_W      8
+module reorder_procesor (
+clk, 
+resetn,
+iReqItem,
+iLoS,
+iValid,
+iROB_Rd,
+oROB_Item,
+oROB_Full,
+oROB_Empty
+);
+
+input  clk;
+input  resetn;
+input  iReqItem;
+input  iLoS;
+input  iValid;
+input  iROB_Rd;
+output oROB_Item;
+output oROB_Full;
+output oROB_Empty;
+
+wire [`REQWR_INFO_W-1:0] iReqItem;
+wire                     iLoS;
+wire                     iValid;
+wire                     iROB_Rd;
+reg  [`ROB_ITEM_W-1:0]   oROB_Item;
+reg                      oROB_Full;
+reg                      oROB_Empty;
+
+always @(*) begin 
+    rReqRow = iReqItem[`ADDR_ROW_RANGE]; 
+    rReqCol = iReqItem[`ADDR_COL_RANGE]; 
+end 
+
+
+
+sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way0 (
+  .clkA(clk), 
+  .iWrA(rWrWay0),
+  .iAddrA(rWrRow),
+  .iDataA(rWrData),
+  .oDataA(), // NO connect
+  .clkB(sclk),
+  .iRdB(rRdWay0),
+  .iAddrB(rRdRow),
+  .oDataB(wRdData0),
+  .iDataB()  // NO connect
+);
+sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way1 (
+  .clkA(clk), 
+  .iWrA(rWrWay1),
+  .iAddrA(rWrRow),
+  .iDataA(rWrData),
+  .oDataA(), // NO connect
+  .clkB(sclk),
+  .iRdB(rRdWay1),
+  .iAddrB(rRdRow),
+  .oDataB(wRdData1),
+  .iDataB()  // NO connect
+);
+sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way2 (
+  .clkA(clk), 
+  .iWrA(rWrWay2),
+  .iAddrA(rWrRow),
+  .iDataA(rWrData),
+  .oDataA(), // NO connect
+  .clkB(sclk),
+  .iRdB(rRdWay2),
+  .iAddrB(rRdRow),
+  .oDataB(wRdData2),
+  .iDataB()  // NO connect
+);
+sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way3 (
+  .clkA(clk), 
+  .iWrA(rWrWay3),
+  .iAddrA(rWrRow),
+  .iDataA(rWrData),
+  .oDataA(), // NO connect
+  .clkB(sclk),
+  .iRdB(rRdWay3),
+  .iAddrB(rRdRow),
+  .oDataB(wRdData3),
+  .iDataB()  // NO connect
+);
+sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way4 (
+  .clkA(clk), 
+  .iWrA(rWrWay4),
+  .iAddrA(rWrRow),
+  .iDataA(rWrData),
+  .oDataA(), // NO connect
+  .clkB(sclk),
+  .iRdB(rRdWay4),
+  .iAddrB(rRdRow),
+  .oDataB(wRdData4),
+  .iDataB()  // NO connect
+);
+sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way5 (
+  .clkA(clk), 
+  .iWrA(rWrWay5),
+  .iAddrA(rWrRow),
+  .iDataA(rWrData),
+  .oDataA(), // NO connect
+  .clkB(sclk),
+  .iRdB(rRdWay5),
+  .iAddrB(rRdRow),
+  .oDataB(wRdData5),
+  .iDataB()  // NO connect
+);
+sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way6 (
+  .clkA(clk), 
+  .iWrA(rWrWay0),
+  .iAddrA(rWrRow),
+  .iDataA(rWrData),
+  .oDataA(), // NO connect
+  .clkB(sclk),
+  .iRdB(rRdWay6),
+  .iAddrB(rRdRow),
+  .oDataB(wRdData6),
+  .iDataB()  // NO connect
+);
+sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way7 (
+  .clkA(clk), 
+  .iWrA(rWrWay0),
+  .iAddrA(rWrRow),
+  .iDataA(rWrData),
+  .oDataA(), // NO connect
+  .clkB(sclk),
+  .iRdB(rRdWay7),
+  .iAddrB(rRdRow),
+  .oDataB(wRdData7),
+  .iDataB()  // NO connect
+);
+
+
+//To record which way when the same row has hit
+sram_2p #(.DSIZE(4), .ASIZE(`ROW_W)) way_index (
+  .clkA(clk), 
+  .iWrA(rWrIndex),
+  .iAddrA(rWrRow),
+  .iDataA(rWrDataIndex),
+  .clkB(clk),
+  .iRdB(iValid),
+  .iAddrB(rReqRow),
+  .oDataB(wRdDataIndex)
+)
 
 endmodule 
