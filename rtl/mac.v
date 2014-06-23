@@ -10,8 +10,18 @@
 `define LOAD_REG1_CMD 3'b110
 `define LOAD_REG2_CMD 3'b111
 `define REQWR_INFO_W  45
+`define REQWR_DATA_W  36
+`define ROB_ITEM_W 24
+`define ROW_W      11
+`define BANK_W     2
+`define COL_W      8
+//Interleave with Bank
+`define ADDR_ROW_RANGE  42:32
+`define ADDR_BANK_RANGE 22:21
+`define ADDR_COL_RANGE  20:13
+`define REQ_SIZE_RANGE  5:4
 
-module memory_access_controller(
+module mem_access_controller(
 clk, 
 resetn,
 sclk,
@@ -88,38 +98,70 @@ output   oCasn;
 output   oWen;
 output   oDqm;
 
-wire         iMAC_ValidRd;
-wire [31:0]  iMAC_AddrRd;
-wire [3:0]   iMAC_TagRd;
-wire [2:0]   iMAC_IdRd;
-wire [1:0]   iMAC_LenRd;
-wire [3:0]   iMAC_QoSRd;
-wire         oMAC_ReadyRd;
-reg          oMAC_ValidRsp;
-reg  [3:0]   oMAC_TagRsp;
-reg  [31:0]  oMAC_DataRsp;
-reg  [1:0]   oMAC_StatusRsp;
-reg          oMAC_EoD;
-wire         iMAC_ReadyRsp;
-wire         iMAC_ValidWr;
-wire [31:0]  iMAC_AddrWr;
-wire [3:0]   iMAC_TagWr;
-wire [2:0]   iMAC_IdWr;
-wire [1:0]   iMAC_LenWr;
-wire [3:0]   iMAC_QoSWr;
-wire         oMAC_ReadyWr;
-wire [31:0]  iMAC_DataWr;
-wire [3:0]   iMAC_MaskWr;
-wire         iMAC_EoD;
-
-reg  [31:0]  ioDq;
-reg  [10:0]  oAddr;
-reg  [1:0]   oBank;
-reg          oCsn;
-reg          oRasn;
-reg          oCasn;
-reg          oWen;
-reg  [3:0]   oDqm;
+wire                       iMAC_ValidRd;
+wire [31:0]                iMAC_AddrRd;
+wire [3:0]                 iMAC_TagRd;
+wire [2:0]                 iMAC_IdRd;
+wire [1:0]                 iMAC_LenRd;
+wire [3:0]                 iMAC_QoSRd;
+wire                       oMAC_ReadyRd;
+reg                        oMAC_ValidRsp;
+reg  [3:0]                 oMAC_TagRsp;
+reg  [31:0]                oMAC_DataRsp;
+reg  [1:0]                 oMAC_StatusRsp;
+reg                        oMAC_EoD;
+wire                       iMAC_ReadyRsp;
+wire                       iMAC_ValidWr;
+wire [31:0]                iMAC_AddrWr;
+wire [3:0]                 iMAC_TagWr;
+wire [2:0]                 iMAC_IdWr;
+wire [1:0]                 iMAC_LenWr;
+wire [3:0]                 iMAC_QoSWr;
+wire                       oMAC_ReadyWr;
+wire [31:0]                iMAC_DataWr;
+wire [3:0]                 iMAC_MaskWr;
+wire                       iMAC_EoD;
+wire [31:0]                ioDq;
+reg  [10:0]                oAddr;
+reg  [1:0]                 oBank;
+reg                        oCsn;
+reg                        oRasn;
+reg                        oCasn;
+reg                        oWen;
+reg  [3:0]                 oDqm;
+wire                       wFull0;
+wire                       wEmpty0;
+wire                       wFull2;
+wire                       wEmpty2;
+reg  [2:0]                 sMacWr;
+reg  [2:0]                 nsMacWr;
+reg  [2:0]                 sMacRd;
+reg  [2:0]                 nsMacRd;
+reg  [`REQWR_INFO_W-1:0 ]  rMACWrInfo;
+reg  [`REQWR_INFO_W-1:0 ]  rMACRdInfo;
+reg  [`REQWR_INFO_W-1:0 ]  rWrData0;
+reg  [`REQWR_INFO_W-1:0 ]  rWrData2;
+reg  [`REQWR_DATA_W-1:0 ]  ppMAC_DataWr;
+reg  [`REQWR_DATA_W-1:0 ]  pp2MAC_DataWr;
+reg  [`REQWR_DATA_W-1:0 ]  rWrData1;
+reg  [3:0]                 ppMAC_MaskWr;
+reg  [3:0]                 pp2MAC_MaskWr;
+reg                        rWr2;
+reg                        rWr1;
+reg                        rWr0;
+reg  [31:0]                ppMACAddrWr;
+reg  [4:0]                 rWrAddr1;
+reg  [1:0]                 rRoundRobin;
+reg                        rRd0;
+reg                        rRd2;
+reg                        rLoS;
+reg                        rSelBank0;
+reg                        rSelBank1;
+reg                        rSelBank2;
+reg                        rSelBank3;
+reg                        ppLoS;
+reg  [`REQWR_INFO_W-1:0]   ppReqQItem; //45
+wire [`REQWR_INFO_W-1:0]   wReqQItem; //45
 
 
 
@@ -136,13 +178,19 @@ always @(posedge clk or negedge resetn) begin
     end else begin  
         //Save the info
         if (iMAC_ValidWr) begin 
-            rMACWrInfo <= {iMAC_AddrWr, iMAC_TagWr, iMAC_IdWr, iMAC_LenWr, iMAC_QoSWr}; 
+            rMACWrInfo  <= {iMAC_AddrWr, iMAC_TagWr, iMAC_IdWr, iMAC_LenWr, iMAC_QoSWr}; 
+            ppMACAddrWr <= iMAC_AddrWr;
         end
         if (iMAC_ValidRd) begin 
-            rMACRdInfo <= {iMAC_AddrRd, iMAC_TagRd, iMAC_IdRd, iMAC_LenRd, iMAC_QoSRd}; 
+            rMACRdInfo  <= {iMAC_AddrRd, iMAC_TagRd, iMAC_IdRd, iMAC_LenRd, iMAC_QoSRd}; 
         end
+        ppMAC_DataWr   <= iMAC_DataWr;
+        pp2MAC_DataWr  <= ppMAC_DataWr;
+        ppMAC_MaskWr   <= iMAC_MaskWr;
+        pp2MAC_MaskWr  <= ppMAC_MaskWr;
     end
 end
+
 //Write Channel FSM 
 always @(posedge clk or negedge resetn ) begin 
     if (~resetn) begin 
@@ -157,14 +205,22 @@ always @(*) begin
     case(sMacWr) 
         REQ_IDLE      : begin 
                               if (iMAC_ValidWr) begin 
-                                  nsMacWr = EQ_FETCH_REQ;
+                                  nsMacWr = REQ_FETCH_REQ;
                               end else 
                                   nsMacWr = REQ_IDLE;
                           end
         REQ_FETCH_REQ : begin 
                               if (iMAC_EoD) 
                                   nsMacWr = REQ_LAST_DATA;                    
+                              else 
+                                  nsMacWr = REQ_FETCH_DATA;
                           end 
+        REQ_FETCH_DATA: begin 
+                              if (iMAC_EoD) 
+                                  nsMacWr = REQ_LAST_DATA;                    
+                              else 
+                                  nsMacWr = REQ_FETCH_DATA;
+                        end
         REQ_LAST_DATA : begin 
                               nsMacWr = REQ_IDLE;
                           end
@@ -194,7 +250,7 @@ always @(posedge clk or negedge resetn) begin
                                   rWrData0 <= 45'b0;
                                   rWr1     <= 1'b1;
                                   rWrData1 <= {pp2MAC_DataWr, pp2MAC_MaskWr} ; 
-                                  rWrAddr1 <= ppMacWrAddr[6:2];
+                                  rWrAddr1 <= ppMACAddrWr[6:2];
                               end 
             REQ_LAST_DATA: begin 
                                   rWr1     <= 1'b1;
@@ -220,14 +276,16 @@ always @(*) begin
         REQ_IDLE      : begin 
                               if (iMAC_ValidRd) begin 
                                   nsMacRd = REQ_FETCH_REQ;
-                              end else 
+                              end else begin 
                                   nsMacRd = REQ_IDLE;
+                              end
                           end
         REQ_FETCH_REQ : begin 
-                              if (iMac_ValidRd)
+                              if (iMAC_ValidRd) begin
                                   nsMacWr = REQ_FETCH_REQ;                    
-                              end else 
+                              end else begin 
                                   nsMacRd = REQ_IDLE;
+                              end
                           end 
     endcase
 end 
@@ -249,6 +307,7 @@ always @(posedge clk or negedge resetn) begin
         endcase
     end 
 end 
+
 //FIXME : adding a register to control, read and write swithing number
 always @(posedge clk or negedge resetn) begin 
     if (~resetn) begin 
@@ -296,6 +355,8 @@ always @(posedge clk or negedge resetn) begin
     end 
 end  
 
+
+
 always @(posedge clk or negedge resetn) begin 
     if(~resetn) begin 
         rSelBank0  <= 1'b0;
@@ -305,24 +366,24 @@ always @(posedge clk or negedge resetn) begin
         ppLoS      <= 1'b0;
         ppReqQItem <= 45'b0;
     end else begin 
-        ppLoS          <= rLos;
+        ppLoS          <= rLoS;
         ppReqQItem     <= wReqQItem;
-        if(wReqQItem[`BANK_RANGE] == 2'b00) begin 
+        if(wReqQItem[`ADDR_BANK_RANGE] == 2'b00) begin 
             rSelBank0  <= 1'b1;
             rSelBank1  <= 1'b0;
             rSelBank2  <= 1'b0;
             rSelBank3  <= 1'b0;
-        end else if (wReqQItem[`BANK_RANGE] == 2'b01) begin 
+        end else if (wReqQItem[`ADDR_BANK_RANGE] == 2'b01) begin 
             rSelBank0  <= 1'b0;
             rSelBank1  <= 1'b1;
             rSelBank2  <= 1'b0;
             rSelBank3  <= 1'b0;
-        end else if (wReqQItem[`BANK_RANGE] == 2'b10) begin 
+        end else if (wReqQItem[`ADDR_BANK_RANGE] == 2'b10) begin 
             rSelBank0  <= 1'b0;
             rSelBank1  <= 1'b0;
             rSelBank2  <= 1'b1;
             rSelBank3  <= 1'b0;
-        end else if (wReqQItem[`BANK_RANGE] == 2'b11) begin 
+        end else if (wReqQItem[`ADDR_BANK_RANGE] == 2'b11) begin 
             rSelBank0  <= 1'b0;
             rSelBank1  <= 1'b0;
             rSelBank2  <= 1'b0;
@@ -393,6 +454,7 @@ reorder_processor ROP_Bank3 (
   .oROB_Empty(wROB_Empty3)
 );
 
+
 fifo #(.DSIZE(45), .ASIZE(5) ) wrReqQueue (
   .wclk(clk), 
   .wrst_n(resetn),
@@ -433,9 +495,9 @@ fifo #(.DSIZE(45), .ASIZE(5) ) rdReqQueue (
 fifo #(.DSIZE(15), .ASIZE(7) ) inOrderBuffer (
   .wclk(clk), 
   .wrst_n(resetn),
-  .wr(rWr2),
-  .rclk(sclk),
-  .rrst_n(sresetn),
+  .wr(rWr4),
+  .rclk(clk),
+  .rrst_n(resetn),
   .rd(rRd4),
   .wdata(rWrData4),
   .rdata(wRdData4),
@@ -443,14 +505,9 @@ fifo #(.DSIZE(15), .ASIZE(7) ) inOrderBuffer (
   .rempty(wEmpty4)
 );
 
-
 endmodule 
 
-`define ROB_ITEM_W 24
-`define ROW_W      11
-`define BANK_W     2
-`defien COL_W      8
-module reorder_procesor (
+module reorder_processor (
 clk, 
 resetn,
 iReqItem,
@@ -479,12 +536,150 @@ wire                     iROB_Rd;
 reg  [`ROB_ITEM_W-1:0]   oROB_Item;
 reg                      oROB_Full;
 reg                      oROB_Empty;
+reg  [`ROW_W-1: 0 ]      rReqRow;
+reg  [`COL_W-1: 0 ]      rReqCol;
+reg  [1:0]               rReqSize; 
+reg                      ppValid;
+reg                      pp2Valid;
+reg                      ppLoS;
+reg  [`ROW_W-1: 0 ]      rWrRow;
+reg  [23:0]              rWrData;
+reg                      rWrWay0;
+reg                      rWrWay1;
+reg                      rWrWay2;
+reg                      rWrWay3;
+reg                      rWrWay4;
+reg                      rWrWay5;
+reg                      rWrWay6;
+reg                      rWrWay7;
+reg  [3:0]               rRdDataIndex;
+wire [3:0]               wRdDataIndex;
+
 
 always @(*) begin 
     rReqRow = iReqItem[`ADDR_ROW_RANGE]; 
     rReqCol = iReqItem[`ADDR_COL_RANGE]; 
+    rReqSize= iReqItem[`REQ_SIZE_RANGE];
 end 
-
+always @(posedge clk or negedge resetn) begin 
+    if (~resetn) begin 
+        ppValid     <= 1'b0;
+        pp2Valid    <= 1'b0;
+        ppLoS       <= 1'b0;
+        rWrRow      <= 11'b0;
+        rRdDataIndex<= 4'b0;
+        rWrData     <= 24'b0;
+        rWrWay0     <= 1'b0;
+        rWrWay1     <= 1'b0;
+        rWrWay2     <= 1'b0;
+        rWrWay3     <= 1'b0;
+        rWrWay4     <= 1'b0;
+        rWrWay5     <= 1'b0;
+        rWrWay6     <= 1'b0;
+        rWrWay7     <= 1'b0;
+    end else begin 
+        ppValid  <= iValid;
+        pp2Valid <= ppValid; 
+        ppLoS    <= iLoS;
+        if (ppValid) begin 
+            rWrRow       <= rReqRow;
+            rRdDataIndex <= wRdDataIndex + 4'b1; //FIXME: when larger than 7, need a flush 
+            rWrData      <= {rReqCol[6:2], rReqSize, ppLoS, rReqCol, 1'b1 };
+            case (wRdDataIndex) 
+                4'b0000: begin 
+                             rWrWay0 <= 1'b1;
+                             rWrWay1 <= 1'b0;
+                             rWrWay2 <= 1'b0;
+                             rWrWay3 <= 1'b0;
+                             rWrWay4 <= 1'b0;
+                             rWrWay5 <= 1'b0;
+                             rWrWay6 <= 1'b0;
+                             rWrWay7 <= 1'b0;
+                         end
+                4'b0001: begin
+                             rWrWay0 <= 1'b0;
+                             rWrWay1 <= 1'b1;
+                             rWrWay2 <= 1'b0;
+                             rWrWay3 <= 1'b0;
+                             rWrWay4 <= 1'b0;
+                             rWrWay5 <= 1'b0;
+                             rWrWay6 <= 1'b0;
+                             rWrWay7 <= 1'b0;
+                         end
+                4'b0010: begin
+                             rWrWay0 <= 1'b0;
+                             rWrWay1 <= 1'b0;
+                             rWrWay2 <= 1'b1;
+                             rWrWay3 <= 1'b0;
+                             rWrWay4 <= 1'b0;
+                             rWrWay5 <= 1'b0;
+                             rWrWay6 <= 1'b0;
+                             rWrWay7 <= 1'b0;
+                         end
+                4'b0011: begin
+                             rWrWay0 <= 1'b0;
+                             rWrWay1 <= 1'b0;
+                             rWrWay2 <= 1'b0;
+                             rWrWay3 <= 1'b1;
+                             rWrWay4 <= 1'b0;
+                             rWrWay5 <= 1'b0;
+                             rWrWay6 <= 1'b0;
+                             rWrWay7 <= 1'b0;
+                         end
+                4'b0100: begin
+                             rWrWay0 <= 1'b0;
+                             rWrWay1 <= 1'b0;
+                             rWrWay2 <= 1'b0;
+                             rWrWay3 <= 1'b0;
+                             rWrWay4 <= 1'b1;
+                             rWrWay5 <= 1'b0;
+                             rWrWay6 <= 1'b0;
+                             rWrWay7 <= 1'b0;
+                         end
+                4'b0101: begin
+                             rWrWay0 <= 1'b0;
+                             rWrWay1 <= 1'b0;
+                             rWrWay2 <= 1'b0;
+                             rWrWay3 <= 1'b0;
+                             rWrWay4 <= 1'b0;
+                             rWrWay5 <= 1'b1;
+                             rWrWay6 <= 1'b0;
+                             rWrWay7 <= 1'b0;
+                         end
+                4'b0110: begin
+                             rWrWay0 <= 1'b0;
+                             rWrWay1 <= 1'b0;
+                             rWrWay2 <= 1'b0;
+                             rWrWay3 <= 1'b0;
+                             rWrWay4 <= 1'b0;
+                             rWrWay5 <= 1'b0;
+                             rWrWay6 <= 1'b1;
+                             rWrWay7 <= 1'b0;
+                         end
+                4'b0111: begin
+                             rWrWay0 <= 1'b0;
+                             rWrWay1 <= 1'b0;
+                             rWrWay2 <= 1'b0;
+                             rWrWay3 <= 1'b0;
+                             rWrWay4 <= 1'b0;
+                             rWrWay5 <= 1'b0;
+                             rWrWay6 <= 1'b0;
+                             rWrWay7 <= 1'b1;
+                         end
+                default: begin 
+                             rWrWay0 <= 1'b0;
+                             rWrWay1 <= 1'b0;
+                             rWrWay2 <= 1'b0;
+                             rWrWay3 <= 1'b0;
+                             rWrWay4 <= 1'b0;
+                             rWrWay5 <= 1'b0;
+                             rWrWay6 <= 1'b0;
+                             rWrWay7 <= 1'b0;
+                         end 
+            endcase 
+        end //end ppValid
+    end 
+end 
 
 
 sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way0 (
@@ -588,13 +783,13 @@ sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way7 (
 //To record which way when the same row has hit
 sram_2p #(.DSIZE(4), .ASIZE(`ROW_W)) way_index (
   .clkA(clk), 
-  .iWrA(rWrIndex),
-  .iAddrA(rWrRow),
+  .iWrA(pp2Valid),
+  .iAddrA(rReqRow),
   .iDataA(rWrDataIndex),
   .clkB(clk),
   .iRdB(iValid),
   .iAddrB(rReqRow),
   .oDataB(wRdDataIndex)
-)
+);
 
 endmodule 
