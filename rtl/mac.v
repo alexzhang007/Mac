@@ -162,6 +162,8 @@ reg                        rSelBank3;
 reg                        ppLoS;
 reg  [`REQWR_INFO_W-1:0]   ppReqQItem; //45
 wire [`REQWR_INFO_W-1:0]   wReqQItem; //45
+wire [`REQWR_INFO_W-1:0]   wRdData0; //45
+wire [`REQWR_INFO_W-1:0]   wRdData2; //45
 
 
 
@@ -308,6 +310,7 @@ always @(posedge clk or negedge resetn) begin
     end 
 end 
 
+
 //FIXME : adding a register to control, read and write swithing number
 always @(posedge clk or negedge resetn) begin 
     if (~resetn) begin 
@@ -318,7 +321,7 @@ always @(posedge clk or negedge resetn) begin
     end else begin 
         if (~wEmpty0 & wEmpty2 & rRoundRobin ==2'b00) begin 
             rRoundRobin <= 2'b01;
-            rRd0        <= 1'b1;
+            rRd0        <= 1'b0;
             rRd2        <= 1'b0;
             rLoS        <= 1'b0; //Write Queue - Store->1'b0
         end else if (wEmpty0 & ~wEmpty2 & rRoundRobin == 2'b00) begin 
@@ -455,15 +458,15 @@ reorder_processor ROP_Bank3 (
 );
 
 
-fifo #(.DSIZE(45), .ASIZE(5) ) wrReqQueue (
-  .wclk(clk), 
-  .wrst_n(resetn),
+sync_fifo #(.DW(45), .AW(5) ) wrReqQueue (
+  .clk(clk), 
+  .reset_n(resetn),
+  .flush(1'b0),
   .wr(rWr0),
-  .rclk(clk),
-  .rrst_n(resetn),
   .rd(rRd0),
   .wdata(rWrData0),
   .rdata(wRdData0),
+  .rdata_valid(wRdValid0),
   .wfull(wFull0),
   .rempty(wEmpty0)
 );
@@ -479,28 +482,28 @@ sram_2p #( .AW(5), .DW(32)) wrDataQueue (
   .oDataB(wRdData1)
 );
 
-fifo #(.DSIZE(45), .ASIZE(5) ) rdReqQueue (
-  .wclk(clk), 
-  .wrst_n(resetn),
+sync_fifo #(.DW(45), .AW(5) ) rdReqQueue (
+  .clk(clk), 
+  .reset_n(resetn),
+  .flush(1'b0),
   .wr(rWr2),
-  .rclk(clk),
-  .rrst_n(resetn),
   .rd(rRd2),
   .wdata(rWrData2),
   .rdata(wRdData2),
+  .rdata_valid(wRdDataValid2),
   .wfull(wFull2),
   .rempty(wEmpty2)
 );
 
-fifo #(.DSIZE(15), .ASIZE(7) ) inOrderBuffer (
-  .wclk(clk), 
-  .wrst_n(resetn),
+sync_fifo #(.DW(15), .AW(7) ) inOrderBuffer (
+  .clk(clk), 
+  .reset_n(resetn),
+  .flush(1'b0),
   .wr(rWr4),
-  .rclk(clk),
-  .rrst_n(resetn),
   .rd(rRd4),
   .wdata(rWrData4),
   .rdata(wRdData4),
+  .rdata_valid(wRdDataValid4),
   .wfull(wFull4),
   .rempty(wEmpty4)
 );

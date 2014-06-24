@@ -1,5 +1,5 @@
 VCS=/proj/cadtools/bin/vcs
-SRC=../../rtl/fifo.v ../../rtl/multiplexor.v ../../rtl/sram_2p.v ../../rtl/mac.v test_mac.v
+SRC=../../rtl/fifo.v ../../rtl/sync_fifo.v ../../rtl/multiplexor.v ../../rtl/sram_2p.v ../../rtl/mac.v test_mac.v
 TGT=simv
 VERICOM=/proj/cadtools/bin/vericom
 VERDI=/proj/cadtools/bin/verdi
