@@ -164,7 +164,9 @@ reg  [`REQWR_INFO_W-1:0]   ppReqQItem; //45
 wire [`REQWR_INFO_W-1:0]   wReqQItem; //45
 wire [`REQWR_INFO_W-1:0]   wRdData0; //45
 wire [`REQWR_INFO_W-1:0]   wRdData2; //45
-
+wire                       wRdValid0;
+wire                       wRdValid2;
+wire [1:0]                 wSelA;
 
 
 assign      oMAC_ReadyWr = ~wFull0;
@@ -321,7 +323,7 @@ always @(posedge clk or negedge resetn) begin
     end else begin 
         if (~wEmpty0 & wEmpty2 & rRoundRobin ==2'b00) begin 
             rRoundRobin <= 2'b01;
-            rRd0        <= 1'b0;
+            rRd0        <= 1'b1;
             rRd2        <= 1'b0;
             rLoS        <= 1'b0; //Write Queue - Store->1'b0
         end else if (wEmpty0 & ~wEmpty2 & rRoundRobin == 2'b00) begin 
@@ -400,12 +402,14 @@ always @(posedge clk or negedge resetn) begin
     end 
 end 
 
+assign wSelA = (wRdValid0|wRdValid2)? rRoundRobin : 2'b0 ;
+
 mux_4 #(.DATA_WIDTH(45)) muxFourA (
   .iZeroBranch(45'b0),
   .iOneBranch(wRdData0),
   .iTwoBranch(wRdData2),
   .iThreeBranch(45'b0),
-  .iSel(rRoundRobin),
+  .iSel(wSelA),
   .oMux(wReqQItem)
 );
 
@@ -490,7 +494,7 @@ sync_fifo #(.DW(45), .AW(5) ) rdReqQueue (
   .rd(rRd2),
   .wdata(rWrData2),
   .rdata(wRdData2),
-  .rdata_valid(wRdDataValid2),
+  .rdata_valid(wRdValid2),
   .wfull(wFull2),
   .rempty(wEmpty2)
 );
