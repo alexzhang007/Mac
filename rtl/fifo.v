@@ -3,7 +3,7 @@
 //Description: Codes from Cummings SNUG 2002 San Joe. 
 //             Jun.14.2014
 //             Update the full and empty output signal, need one cycle only. 
-module fifo(
+module async_fifo(
 wclk, 
 wrst_n,
 wr,
@@ -15,7 +15,7 @@ rdata,
 wfull,
 rempty
 );
-parameter DSIZE=8, ASIZE=4;
+parameter DW=8, AW=4;
 
 input wclk; 
 input wrst_n;
@@ -28,15 +28,15 @@ output rdata;
 output wfull;
 output rempty;
 
-wire [DSIZE-1:0] rdata;
-wire [DSIZE-1:0] wdata;
+wire [DW-1:0] rdata;
+wire [DW-1:0] wdata;
 //Internal variable 
-wire [ASIZE-1:0] wptr, rptr;
-wire [ASIZE-1:0] waddr, raddr;
+wire [AW-1:0] wptr, rptr;
+wire [AW-1:0] waddr, raddr;
 wire             aempty_n;
 wire             afull_n;
 
-async_cmp #(ASIZE)  
+async_cmp #(AW)  
     async_cmp (
     .aempty_n(aempty_n),
     .afull_n(afull_n),
@@ -45,7 +45,7 @@ async_cmp #(ASIZE)
     .wrst_n(wrst_n)
     );
 
-fifomem #(DSIZE, ASIZE) 
+fifomem #(DW, AW) 
     fifomem (
     .rdata(rdata),
     .wdata(wdata),
@@ -55,7 +55,7 @@ fifomem #(DSIZE, ASIZE)
     .wclk(wclk)
     );
 
-rptr_empty #(ASIZE) 
+rptr_empty #(AW) 
     rptr_empty(
     .rempty(rempty),
     .rptr(rptr),
@@ -65,7 +65,7 @@ rptr_empty #(ASIZE)
     .rrst_n(rrst_n)
     );
 
-wptr_full #(ASIZE)
+wptr_full #(AW)
     wptr_full(
     .wfull(wfull),
     .wptr(wptr),
@@ -83,8 +83,8 @@ wptr,
 rptr,
 wrst_n
 );
-parameter ADDRSIZE=4;
-parameter N = ADDRSIZE-1;
+parameter AW=4;
+parameter N = AW-1;
 
 output aempty_n;
 output afull_n;
@@ -118,8 +118,8 @@ wdata,
 raddr,
 rdata
 );
-parameter DATASIZE=8, ADDRSIZE=4;
-parameter DEPTH = 1<< ADDRSIZE;
+parameter DW=8, AW=4;
+parameter DEPTH = 1<< AW;
 
 input wclk;
 input wr_en;
@@ -128,10 +128,10 @@ input wdata;
 input raddr;
 output rdata;
 
-wire [DATASIZE-1:0] wdata;
-wire [DATASIZE-1:0] rdata;
-wire [ADDRSIZE-1:0] waddr;
-wire [ADDRSIZE-1:0] raddr;
+wire [DW-1:0] wdata;
+wire [DW-1:0] rdata;
+wire [AW-1:0] waddr;
+wire [AW-1:0] raddr;
 
 `ifdef VENDOR_MEM
     VENDOR_RAM MEM (
@@ -143,7 +143,7 @@ wire [ADDRSIZE-1:0] raddr;
     .clk(wclk)
     )
 `else 
-    reg [DATASIZE-1:0] MEM[0: DEPTH-1];
+    reg [DW-1:0] MEM[0: DEPTH-1];
 
     assign rdata = MEM[raddr];
     always @(posedge wclk)
@@ -165,11 +165,11 @@ input rd_en;
 input aempty_n;
 output rempty;
 output rptr;
-parameter ADDRSIZE = 4;
-reg [ADDRSIZE-1:0] rptr;
+parameter AW = 4;
+reg [AW-1:0] rptr;
 
 //internal variable
-reg[ADDRSIZE-1:0] rbin, rgnext, rbnext;
+reg[AW-1:0] rbin, rgnext, rbnext;
 reg rempty, rempty2;
  
 //Gray Style2 Pointer 
@@ -187,7 +187,7 @@ assign rgnext = (rbnext>>1)^rbnext;
 
 always @(posedge rclk or negedge aempty_n)
     if (!aempty_n) {rempty, rempty2} <= 2'b11;
-    else           {rempty2, rempty} <= {rempty, ~aempty_n};
+    else           {rempty, rempty2} <= {rempty, ~aempty_n};
 
 endmodule //endmodule rptr_empty  
 
@@ -206,12 +206,12 @@ output wptr;
 input afull_n;
 output wfull;
 
-parameter ADDRSIZE =4;
-reg [ADDRSIZE-1:0] wptr;
+parameter AW =4;
+reg [AW-1:0] wptr;
 
 //internal variables
-reg [ADDRSIZE-1:0] wbin;
-wire [ADDRSIZE-1:0] wgnext, wbnext;
+reg [AW-1:0] wbin;
+wire [AW-1:0] wgnext, wbnext;
 reg wfull, wfull2;
 
 //Gray Style2 Pointer

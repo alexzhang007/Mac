@@ -9,6 +9,8 @@ This module is to interface with sram, dealing with requests coming from MAI and
  Write the RTL of Reorder Processor
 *Jun.23.2014
  RTL compile is passed for Reorder Processor
+*Jun.25.2014
+ In order buffer is OK, start the logic for reorder buffer
 
 [1] ORGFXSoC-master/orpsocv2/boards/xilinx/ml501/rtl/verilog/xilinx_ssram.v
 [2] MT48LC2M32B2-512K x 32 x 4banks, Micro. 

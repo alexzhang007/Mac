@@ -2,4 +2,5 @@
 /proj/blza0/wa/alzhang/proj/eff_verilog/mac/rtl/mac.v
 /proj/blza0/wa/alzhang/proj/eff_verilog/mac/rtl/fifo.v
 /proj/blza0/wa/alzhang/proj/eff_verilog/mac/rtl/sync_fifo.v
+/proj/blza0/wa/alzhang/proj/eff_verilog/mac/rtl/sram_2p.v
 /proj/blza0/wa/alzhang/proj/eff_verilog/mac/rtl/multiplexor.v

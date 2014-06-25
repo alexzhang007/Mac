@@ -1,9 +1,11 @@
 //Author      : Alex Zhang (cgzhangwei@gmail.com)
 //Date        : Jun. 16. 2014
 //Description : Create the testbench
+`timescale 100ps/1ps
 module test;
 reg         clk;
 reg         resetn;
+reg         clk333;
 
 event start_sim_evt;
 event end_sim_evt;
@@ -34,6 +36,8 @@ reg          rMAC_EoD;
 mem_access_controller  Mac(
   .clk(clk),
   .resetn(resetn),
+  .sclk(clk333),
+  .sresetn(resetn),
   //Instruction Fetech (MAC)
   .iMAC_ValidRd(rMAC_ValidRd),
   .iMAC_AddrRd(rMAC_AddrRd),
@@ -83,6 +87,7 @@ task basic ;
         #1;
         fork
             drive_clock;
+            drive_sram_clock;
             reset_unit;
             drive_sim;
             monitor_sim;
@@ -127,11 +132,20 @@ task reset_unit;
         $display("Reset is done");
         end
 endtask 
-task  drive_clock;
+//Clock frequency is .
+task  drive_clock; 
     begin 
         clk = 0;
         forever begin 
-        #5 clk = ~clk;
+        #0.5ns clk = ~clk;
+        end 
+    end 
+endtask
+task  drive_sram_clock;
+    begin 
+        clk333 = 0;
+        forever begin 
+        #1.5ns clk333 = ~clk333;
         end 
     end 
 endtask
@@ -143,7 +157,7 @@ task  drive_sim;
         begin  : drive_wrreq
             @(posedge clk);
             rMAC_ValidWr   = 1'b1;
-            rMAC_AddrWr    = 32'h2345_F000;
+            rMAC_AddrWr    = 32'h2345_F220;
             rMAC_TagWr     = 4'b0;
             rMAC_IdWr      = 3'b101;
             rMAC_LenWr     = 2'b10; //64Bit data
