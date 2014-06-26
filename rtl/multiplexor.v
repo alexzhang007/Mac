@@ -1,6 +1,7 @@
 //Author      : Alex Zhang (cgzhangwei@gmail.com)
 //Date        : May. 11. 2014
 //Description : Implement the multiplexor with 4-1 and 2-1
+//              Fix Bug18: Mux output has X
 module mux_2 (
 iZeroBranch,
 iOneBranch,
@@ -17,7 +18,7 @@ wire [DATA_WIDTH-1:0] iOneBranch;
 wire iSel;
 reg  [DATA_WIDTH-1:0] oMux;
 
-always @(iSel) begin 
+always @(*) begin 
     case (iSel) 
         1'b0 : oMux = iZeroBranch;
         1'b1 : oMux = iOneBranch;
@@ -44,7 +45,7 @@ wire [DATA_WIDTH-1:0] iOneBranch;
 wire [1:0]            iSel;
 reg  [DATA_WIDTH-1:0] oMux;
 
-always @(iSel) begin 
+always @(*) begin 
     case (iSel) 
         2'b00 : oMux = iZeroBranch;
         2'b01 : oMux = iOneBranch;
@@ -78,8 +79,8 @@ wire [DATA_WIDTH-1:0] iThreeBranch;
 wire [1:0] iSel;
 reg [DATA_WIDTH-1:0] oMux;
 
-
-always @(iSel) begin 
+//If always sensity list only has iSel, it will cause the oMux X
+always @(*) begin 
     case (iSel) 
       2'b00 : oMux = iZeroBranch;
       2'b01 : oMux = iOneBranch;
