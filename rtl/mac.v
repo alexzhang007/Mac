@@ -182,6 +182,7 @@ reg  [`ROW_W-1:0]          ppReqRow;
 reg  [`ROW_W-1:0]          pp1ReqRow;
 reg  [`ROW_W-1:0]          pp2ReqRow;
 wire [2+3+`ROW_W-1:0]      wWrData4;
+reg                        rRd4;
 wire [2+3+`ROW_W-1:0]      wIOBEntry0;
 wire [2+3+`ROW_W-1:0]      wIOBEntry1;
 wire [2+3+`ROW_W-1:0]      wIOBEntry2;
@@ -193,6 +194,19 @@ wire [`ROB_ITEM_W-1:0]     wRdData5;
 wire                       wRdValid5;
 wire                       wFull5;
 wire                       wEmpty5;
+reg  [1 :0]                rBankSel;
+reg  [10:0]                rRowSel;
+reg  [10:0]                ppRowSel;
+reg                        ppRdValid4;
+reg                        rROB_Rd0;
+reg                        rROB_Rd1;
+reg                        rROB_Rd2;
+reg                        rROB_Rd3;
+wire                       wEmpty4;
+wire                       wRdValid4;
+wire [15:0]                wRdData4;
+
+
 
 assign      oMAC_ReadyWr = ~wFull0;
 assign      oMAC_ReadyRd = ~wFull2;
@@ -265,26 +279,26 @@ always @(posedge clk or negedge resetn) begin
     end else begin 
         case (sMacWr)
             REQ_IDLE      : begin 
-                                  rWr0     <= 1'b0;
-                                  rWrData0 <= 45'b0;
-                                  rWr1     <= 1'b0;
-                                  rWrData1 <= 36'b0;
-                              end 
+                                rWr0     <= 1'b0;
+                                rWrData0 <= 45'b0;
+                                rWr1     <= 1'b0;
+                                rWrData1 <= 36'b0;
+                            end 
             REQ_FETCH_REQ : begin  
-                                  rWr0     <= 1'b1;
-                                  rWrData0 <= rMACWrInfo ;
-                              end 
+                                rWr0     <= 1'b1;
+                                rWrData0 <= rMACWrInfo ;
+                            end 
             REQ_FETCH_DATA: begin 
-                                  rWr0     <= 1'b0; //FIXME: Performance is very low for data 
-                                  rWrData0 <= 45'b0;
-                                  rWr1     <= 1'b1;
-                                  rWrData1 <= {pp2MAC_DataWr, pp2MAC_MaskWr} ; 
-                                  rWrAddr1 <= ppMACAddrWr[6:2];
-                              end 
+                                rWr0     <= 1'b0; //FIXME: Performance is very low for data 
+                                rWrData0 <= 45'b0;
+                                rWr1     <= 1'b1;
+                                rWrData1 <= {pp2MAC_DataWr, pp2MAC_MaskWr} ; 
+                                rWrAddr1 <= ppMACAddrWr[6:2];
+                           end 
             REQ_LAST_DATA: begin 
-                                  rWr1     <= 1'b1;
-                                  rWrData1 <= {pp2MAC_DataWr, pp2MAC_MaskWr} ; 
-                              end 
+                                rWr1     <= 1'b1;
+                                rWrData1 <= {pp2MAC_DataWr, pp2MAC_MaskWr} ; 
+                           end 
         endcase
     end 
 end 
@@ -409,7 +423,7 @@ always @(posedge clk or negedge resetn) begin
         pp2ReqBank     <= pp1ReqBank;
         ppReqRow       <= wReqQItem[`ADDR_ROW_RANGE];
         pp1ReqRow      <= ppReqRow;
-        pp2ReqRow      <= pp1ReqBank;
+        pp2ReqRow      <= pp1ReqRow;
   
         if( (|wSelA) && (wReqQItem[`ADDR_BANK_RANGE] == 2'b00) ) begin 
             rSelBank0  <= 1'b1;
@@ -440,6 +454,46 @@ always @(posedge clk or negedge resetn) begin
     end 
 end 
 
+
+
+always @(posedge clk or negedge resetn) begin 
+    if (~resetn) begin 
+        rRd4       <= 1'b0;
+        rBankSel   <= 2'b00;
+        ppRdValid4 <= 1'b0;
+        rRowSel    <= 11'b0;
+        ppRowSel   <= 11'b0;
+        rROB_Rd0   <= 1'b0;
+        rROB_Rd1   <= 1'b0;
+        rROB_Rd2   <= 1'b0;
+        rROB_Rd3   <= 1'b0;
+    end else begin 
+        rRd4       <= ~wEmpty4 ? 1'b1 : 1'b0; 
+        ppRdValid4 <= wRdValid4;
+        if (wRdValid4) begin 
+             rBankSel <= wRdData4[15:14];
+             rRowSel  <= wRdData4[10:0];
+        end else begin 
+             rBankSel <= 2'b00;
+             rRowSel  <= 11'b0;
+        end 
+        if (ppRdValid4) begin 
+             ppRowSel <= rRowSel;
+             case (rBankSel) 
+                 2'b00 : rROB_Rd0 <= 1'b1;
+                 2'b01 : rROB_Rd1 <= 1'b1;
+                 2'b10 : rROB_Rd2 <= 1'b1;
+                 2'b11 : rROB_Rd3 <= 1'b1;
+             endcase 
+        end else begin 
+             rROB_Rd0 <= 1'b0;
+             rROB_Rd1 <= 1'b0;
+             rROB_Rd2 <= 1'b0;
+             rROB_Rd3 <= 1'b0;
+        end 
+    end 
+end 
+
 assign wSelA = (wRdValid0|wRdValid2)? rRoundRobin : 2'b0 ;
 
 mux_4 #(.DATA_WIDTH(45)) muxFourA (
@@ -457,8 +511,11 @@ reorder_processor ROP_Bank0 (
   .iReqItem(ppReqQItem),
   .iLoS(ppLoS),
   .iValid(rSelBank0),
-  .iROB_Rd(rROB_Rd),
+  .iROB_Rd(rROB_Rd0),
+  .iROB_Row(ppRowSel),
   .oROB_Item(wItemBank0),
+  .oROB_ItemValid(),
+  .oROB_ItemEnd(),
   .oROB_Way(wROB_Way0),
   .oROB_WayWr(wROB_WayWr0),
   .oROB_Full(wROB_Full0),
@@ -471,8 +528,11 @@ reorder_processor ROP_Bank1 (
   .iReqItem(ppReqQItem),
   .iLoS(ppLoS),
   .iValid(rSelBank1),
-  .iROB_Rd(rROB_Rd),
+  .iROB_Rd(rROB_Rd1),
+  .iROB_Row(ppRowSel),
   .oROB_Item(wItemBank1),
+  .oROB_ItemValid(),
+  .oROB_ItemEnd(),
   .oROB_Way(wROB_Way1),
   .oROB_WayWr(wROB_WayWr1),
   .oROB_Full(wROB_Full0),
@@ -485,8 +545,11 @@ reorder_processor ROP_Bank2 (
   .iReqItem(ppReqQItem),
   .iLoS(ppLoS),
   .iValid(rSelBank2),
-  .iROB_Rd(rROB_Rd),
+  .iROB_Rd(rROB_Rd2),
+  .iROB_Row(ppRowSel),
   .oROB_Item(wItemBank2),
+  .oROB_ItemValid(),
+  .oROB_ItemEnd(),
   .oROB_Way(wROB_Way2),
   .oROB_WayWr(wROB_WayWr2),
   .oROB_Full(wROB_Full2),
@@ -499,8 +562,11 @@ reorder_processor ROP_Bank3 (
   .iReqItem(ppReqQItem),
   .iLoS(ppLoS),
   .iValid(rSelBank3),
-  .iROB_Rd(rROB_Rd),
+  .iROB_Rd(rROB_Rd3),
+  .iROB_Row(ppRowSel),
   .oROB_Item(rItemBank3),
+  .oROB_ItemValid(),
+  .oROB_ItemEnd(),
   .oROB_Way(wROB_Way3),
   .oROB_WayWr(wROB_WayWr3),
   .oROB_Full(wROB_Full3),
@@ -569,333 +635,30 @@ mux_4 #(.DATA_WIDTH(16)) muxFourC (
 );
 
 
-async_fifo #(.DW(16), .AW(7) ) bufferInOrder (
-  .wclk(clk), 
-  .wrst_n(resetn),
+sync_fifo #(.DW(16), .AW(7) ) bufferInOrder (
+  .clk(clk), 
+  .reset_n(resetn),
+  .flush(1'b0),
   .wr(wWr4),
   .wdata(wWrData4),
-  .rclk(sclk),
-  .rrst_n(resetn),
   .rd(rRd4),
   .rdata(wRdData4),
+  .rdata_valid(wRdValid4),
   .wfull(wFull4),
   .rempty(wEmpty4)
 );
 
-sync_fifo #(.DW(`ROB_ITEM_W), .AW(7) ) bufferReOrder (
-  .clk(sclk),
-  .reset_n(resetn),
-  .flush(1'b0),
+async_fifo #(.DW(`ROB_ITEM_W), .AW(7) ) bufferReOrder (
+  .wclk(clk),
+  .wrst_n(resetn),
   .wr(rWr5),
   .wdata(rWrData5),
+  .rclk(sclk),
+  .rrst_n(resetn),
   .rd(rRd5),
   .rdata(wRdData5),
-  .rdata_valid(wRdValid5),
   .wfull(wFull5),
   .rempty(wEmpty5)
 );
 endmodule 
 
-module reorder_processor (
-clk, 
-resetn,
-iReqItem,
-iLoS,
-iValid,
-iROB_Rd,
-oROB_Item,
-oROB_Way,
-oROB_WayWr,
-oROB_Full,
-oROB_Empty
-);
-
-input  clk;
-input  resetn;
-input  iReqItem;
-input  iLoS;
-input  iValid;
-input  iROB_Rd;
-output oROB_Item;
-output oROB_Way;
-output oROB_WayWr;
-output oROB_Full;
-output oROB_Empty;
-
-wire [`REQWR_INFO_W-1:0] iReqItem;
-wire                     iLoS;
-wire                     iValid;
-wire                     iROB_Rd;
-reg  [`ROB_ITEM_W-1:0]   oROB_Item;
-reg  [2:0]               oROB_Way;
-reg                      oROB_WayWr;
-reg                      oROB_Full;
-reg                      oROB_Empty;
-reg  [`ROW_W-1: 0 ]      rReqRow;
-reg  [`COL_W-1: 0 ]      rReqCol;
-reg  [1:0]               rReqSize; 
-reg                      ppValid;
-reg                      pp2Valid;
-reg                      ppLoS;
-reg  [`ROW_W-1: 0 ]      rWrRow;
-reg  [`ROW_W-1: 0 ]      ppWrRow;
-reg  [23:0]              rWrData;
-reg  [23:0]              ppWrData;
-reg                      rWrWay0;
-reg                      rWrWay1;
-reg                      rWrWay2;
-reg                      rWrWay3;
-reg                      rWrWay4;
-reg                      rWrWay5;
-reg                      rWrWay6;
-reg                      rWrWay7;
-reg  [2:0]               rRdDataIndex;
-wire [2:0]               wRdDataIndex;
-
-
-always @(*) begin 
-    rReqRow = iReqItem[`ADDR_ROW_RANGE]; 
-    rReqCol = iReqItem[`ADDR_COL_RANGE]; 
-    rReqSize= iReqItem[`REQ_SIZE_RANGE];
-end 
-always @(posedge clk or negedge resetn) begin 
-    if (~resetn) begin 
-        ppValid     <= 1'b0;
-        pp2Valid    <= 1'b0;
-        ppLoS       <= 1'b0;
-        rWrRow      <= 11'b0;
-        ppWrRow     <= 11'b0;
-        rRdDataIndex<= 4'b0;
-        rWrData     <= 24'b0;
-        ppWrData    <= 24'b0;
-        rWrWay0     <= 1'b0;
-        rWrWay1     <= 1'b0;
-        rWrWay2     <= 1'b0;
-        rWrWay3     <= 1'b0;
-        rWrWay4     <= 1'b0;
-        rWrWay5     <= 1'b0;
-        rWrWay6     <= 1'b0;
-        rWrWay7     <= 1'b0;
-    end else begin 
-        ppValid  <= iValid;
-        pp2Valid <= ppValid; 
-        ppLoS    <= iLoS;
-        ppWrRow  <= rWrRow;
-        ppWrData <= rWrData;
-        if (ppValid) begin 
-            rWrRow       <= rReqRow;
-            rRdDataIndex <= wRdDataIndex + 4'b1; //FIXME: when larger than 7, need a flush 
-            oROB_Way     <= wRdDataIndex;
-            oROB_WayWr   <= 1'b1; //Actually ahead of the way write
-            rWrData      <= {rReqCol[6:2], rReqSize, ppLoS, rReqCol, 1'b1 };
-            case (wRdDataIndex) 
-                 3'b000: begin 
-                             rWrWay0 <= 1'b1;
-                             rWrWay1 <= 1'b0;
-                             rWrWay2 <= 1'b0;
-                             rWrWay3 <= 1'b0;
-                             rWrWay4 <= 1'b0;
-                             rWrWay5 <= 1'b0;
-                             rWrWay6 <= 1'b0;
-                             rWrWay7 <= 1'b0;
-                         end
-                 3'b001: begin
-                             rWrWay0 <= 1'b0;
-                             rWrWay1 <= 1'b1;
-                             rWrWay2 <= 1'b0;
-                             rWrWay3 <= 1'b0;
-                             rWrWay4 <= 1'b0;
-                             rWrWay5 <= 1'b0;
-                             rWrWay6 <= 1'b0;
-                             rWrWay7 <= 1'b0;
-                         end
-                 3'b010: begin
-                             rWrWay0 <= 1'b0;
-                             rWrWay1 <= 1'b0;
-                             rWrWay2 <= 1'b1;
-                             rWrWay3 <= 1'b0;
-                             rWrWay4 <= 1'b0;
-                             rWrWay5 <= 1'b0;
-                             rWrWay6 <= 1'b0;
-                             rWrWay7 <= 1'b0;
-                         end
-                 3'b011: begin
-                             rWrWay0 <= 1'b0;
-                             rWrWay1 <= 1'b0;
-                             rWrWay2 <= 1'b0;
-                             rWrWay3 <= 1'b1;
-                             rWrWay4 <= 1'b0;
-                             rWrWay5 <= 1'b0;
-                             rWrWay6 <= 1'b0;
-                             rWrWay7 <= 1'b0;
-                         end
-                 3'b100: begin
-                             rWrWay0 <= 1'b0;
-                             rWrWay1 <= 1'b0;
-                             rWrWay2 <= 1'b0;
-                             rWrWay3 <= 1'b0;
-                             rWrWay4 <= 1'b1;
-                             rWrWay5 <= 1'b0;
-                             rWrWay6 <= 1'b0;
-                             rWrWay7 <= 1'b0;
-                         end
-                 3'b101: begin
-                             rWrWay0 <= 1'b0;
-                             rWrWay1 <= 1'b0;
-                             rWrWay2 <= 1'b0;
-                             rWrWay3 <= 1'b0;
-                             rWrWay4 <= 1'b0;
-                             rWrWay5 <= 1'b1;
-                             rWrWay6 <= 1'b0;
-                             rWrWay7 <= 1'b0;
-                         end
-                 3'b110: begin
-                             rWrWay0 <= 1'b0;
-                             rWrWay1 <= 1'b0;
-                             rWrWay2 <= 1'b0;
-                             rWrWay3 <= 1'b0;
-                             rWrWay4 <= 1'b0;
-                             rWrWay5 <= 1'b0;
-                             rWrWay6 <= 1'b1;
-                             rWrWay7 <= 1'b0;
-                         end
-                 3'b111: begin
-                             rWrWay0 <= 1'b0;
-                             rWrWay1 <= 1'b0;
-                             rWrWay2 <= 1'b0;
-                             rWrWay3 <= 1'b0;
-                             rWrWay4 <= 1'b0;
-                             rWrWay5 <= 1'b0;
-                             rWrWay6 <= 1'b0;
-                             rWrWay7 <= 1'b1;
-                         end
-                default: begin 
-                             rWrWay0 <= 1'b0;
-                             rWrWay1 <= 1'b0;
-                             rWrWay2 <= 1'b0;
-                             rWrWay3 <= 1'b0;
-                             rWrWay4 <= 1'b0;
-                             rWrWay5 <= 1'b0;
-                             rWrWay6 <= 1'b0;
-                             rWrWay7 <= 1'b0;
-                         end 
-            endcase 
-        end else begin  
-            oROB_Way     <= 3'b000;
-            oROB_WayWr   <= 1'b0; 
-        end  //end ppValid
-    end 
-end 
-
-
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way0 (
-  .clkA(clk), 
-  .iWrA(rWrWay0),
-  .iAddrA(ppWrRow),
-  .iDataA(ppWrData),
-  .oDataA(), // NO connect
-  .clkB(sclk),
-  .iRdB(rRdWay0),
-  .iAddrB(rRdRow),
-  .oDataB(wRdData0),
-  .iDataB()  // NO connect
-);
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way1 (
-  .clkA(clk), 
-  .iWrA(rWrWay1),
-  .iAddrA(ppWrRow),
-  .iDataA(ppWrData),
-  .oDataA(), // NO connect
-  .clkB(sclk),
-  .iRdB(rRdWay1),
-  .iAddrB(rRdRow),
-  .oDataB(wRdData1),
-  .iDataB()  // NO connect
-);
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way2 (
-  .clkA(clk), 
-  .iWrA(rWrWay2),
-  .iAddrA(ppWrRow),
-  .iDataA(ppWrData),
-  .oDataA(), // NO connect
-  .clkB(sclk),
-  .iRdB(rRdWay2),
-  .iAddrB(rRdRow),
-  .oDataB(wRdData2),
-  .iDataB()  // NO connect
-);
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way3 (
-  .clkA(clk), 
-  .iWrA(rWrWay3),
-  .iAddrA(ppWrRow),
-  .iDataA(ppWrData),
-  .oDataA(), // NO connect
-  .clkB(sclk),
-  .iRdB(rRdWay3),
-  .iAddrB(rRdRow),
-  .oDataB(wRdData3),
-  .iDataB()  // NO connect
-);
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way4 (
-  .clkA(clk), 
-  .iWrA(rWrWay4),
-  .iAddrA(ppWrRow),
-  .iDataA(ppWrData),
-  .oDataA(), // NO connect
-  .clkB(sclk),
-  .iRdB(rRdWay4),
-  .iAddrB(rRdRow),
-  .oDataB(wRdData4),
-  .iDataB()  // NO connect
-);
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way5 (
-  .clkA(clk), 
-  .iWrA(rWrWay5),
-  .iAddrA(ppWrRow),
-  .iDataA(ppWrData),
-  .oDataA(), // NO connect
-  .clkB(sclk),
-  .iRdB(rRdWay5),
-  .iAddrB(rRdRow),
-  .oDataB(wRdData5),
-  .iDataB()  // NO connect
-);
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way6 (
-  .clkA(clk), 
-  .iWrA(rWrWay0),
-  .iAddrA(ppWrRow),
-  .iDataA(ppWrData),
-  .oDataA(), // NO connect
-  .clkB(sclk),
-  .iRdB(rRdWay6),
-  .iAddrB(rRdRow),
-  .oDataB(wRdData6),
-  .iDataB()  // NO connect
-);
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way7 (
-  .clkA(clk), 
-  .iWrA(rWrWay0),
-  .iAddrA(ppWrRow),
-  .iDataA(ppWrData),
-  .oDataA(), // NO connect
-  .clkB(sclk),
-  .iRdB(rRdWay7),
-  .iAddrB(rRdRow),
-  .oDataB(wRdData7),
-  .iDataB()  // NO connect
-);
-
-
-//To record which way when the same row has hit
-sram_2p #(.DSIZE(4), .ASIZE(`ROW_W)) way_index (
-  .clkA(clk), 
-  .iWrA(pp2Valid),
-  .iAddrA(rReqRow),
-  .iDataA(rWrDataIndex),
-  .clkB(clk),
-  .iRdB(iValid),
-  .iAddrB(rReqRow),
-  .oDataB(wRdDataIndex)
-);
-
-endmodule 

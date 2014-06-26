@@ -1,7 +1,7 @@
 //Author      : Alex Zhang (cgzhangwei@gmail.com)
 //Date        : Jun. 16. 2014
 //Description : Create the testbench
-`timescale 100ps/1ps
+`timescale 1ps/1ps
 module test;
 reg         clk;
 reg         resetn;
@@ -104,9 +104,8 @@ task monitor_sim;
 endtask
 task reset_unit;
     begin 
-        #5;
         resetn = 1;
-        #10;
+        repeat (3) @(posedge clk);
         resetn = 0;
 //Reset the reg variable 
         rMAC_ValidRd   = 1'b0;;
@@ -126,7 +125,7 @@ task reset_unit;
         rMAC_MaskWr    = 4'b0;
         rMAC_EoD       = 1'b0;
 
-        #20;
+        repeat (2) @(posedge clk);
         resetn = 1;
         ->start_sim_evt;
         $display("Reset is done");
@@ -145,7 +144,7 @@ task  drive_sram_clock;
     begin 
         clk333 = 0;
         forever begin 
-        #1.5ns clk333 = ~clk333;
+        #1.667ns clk333 = ~clk333;
         end 
     end 
 endtask

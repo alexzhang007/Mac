@@ -187,7 +187,7 @@ assign rgnext = (rbnext>>1)^rbnext;
 
 always @(posedge rclk or negedge aempty_n)
     if (!aempty_n) {rempty, rempty2} <= 2'b11;
-    else           {rempty, rempty2} <= {rempty, ~aempty_n};
+    else           {rempty, rempty2} <= {rempty2, ~aempty_n};
 
 endmodule //endmodule rptr_empty  
 
@@ -231,6 +231,6 @@ assign wgnext = (wbnext>>1) ^ wbnext;
 always @(posedge wclk or negedge wrst_n or negedge afull_n)
     if (~wrst_n) {wfull, wfull2} <= 2'b00;
     else if (~afull_n) {wfull, wfull2} <= 2'b11;
-    else {wfull2, wfull} <= {wfull, ~afull_n}; //We need one cycle delay
+    else {wfull, wfull2} <= {wfull2, ~afull_n}; //We need one cycle delay
 
 endmodule //endmodule wptr_full
