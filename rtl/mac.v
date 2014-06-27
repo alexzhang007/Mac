@@ -11,7 +11,8 @@
 `define LOAD_REG2_CMD 3'b111
 `define REQWR_INFO_W  45
 `define REQWR_DATA_W  36
-`define ROB_ITEM_W 24
+`define ROP_ITEM_W 24
+`define ROB_ITEM_W 36
 `define ROW_W      11
 `define BANK_W     2
 `define COL_W      8
@@ -50,6 +51,7 @@ iMAC_DataWr,
 iMAC_MaskWr,
 iMAC_EoD,
 ioDq,
+oClkEn,
 oAddr,
 oBank,
 oCsn,
@@ -62,6 +64,10 @@ parameter REQ_IDLE       = 3'b000;
 parameter REQ_FETCH_REQ  = 3'b001;
 parameter REQ_FETCH_DATA = 3'b010;
 parameter REQ_LAST_DATA  = 3'b100;
+
+parameter IOB_IDLE = 2'b00;
+parameter IOB_FIRST= 2'b01;
+parameter IOB_WAIT = 2'b10; 
 input    clk;
 input    resetn;
 input    sclk;
@@ -91,6 +97,7 @@ input    iMAC_MaskWr;
 input    iMAC_EoD;
 inout    ioDq;
 output   oAddr;
+output   oClkEn;
 output   oBank;
 output   oCsn;
 output   oRasn;
@@ -122,6 +129,7 @@ wire [31:0]                iMAC_DataWr;
 wire [3:0]                 iMAC_MaskWr;
 wire                       iMAC_EoD;
 wire [31:0]                ioDq;
+reg                        oClkEn;
 reg  [10:0]                oAddr;
 reg  [1:0]                 oBank;
 reg                        oCsn;
@@ -129,6 +137,16 @@ reg                        oRasn;
 reg                        oCasn;
 reg                        oWen;
 reg  [3:0]                 oDqm;
+wire [31:0]                wDq;
+reg  [31:0]                rDq;
+wire                       wClkEn;
+wire [10:0]                wAddr;
+wire [1:0]                 wBank;
+wire                       wCsn;
+wire                       wRasn;
+wire                       wCasn;
+wire                       wWen;
+wire [3:0]                 wDqm;
 wire                       wFull0;
 wire                       wEmpty0;
 wire                       wFull2;
@@ -205,6 +223,24 @@ reg                        rROB_Rd3;
 wire                       wEmpty4;
 wire                       wRdValid4;
 wire [15:0]                wRdData4;
+wire [`ROP_ITEM_W-1:0]     wItemBank0;
+wire [`ROP_ITEM_W-1:0]     wItemBank1;
+wire [`ROP_ITEM_W-1:0]     wItemBank2;
+wire [`ROP_ITEM_W-1:0]     wItemBank3;
+reg  [1:0]                 sIOB;
+reg  [1:0]                 nsIOB;
+reg                        rSucROB0;
+reg                        rSucROB1;
+reg                        rSucROB2;
+reg                        rSucROB3;
+wire                       wROB_ItemEnd0;
+wire                       wROB_ItemEnd1;
+wire                       wROB_ItemEnd2;
+wire                       wROB_ItemEnd3;
+wire                       wROB_ItemValid0;
+wire                       wROB_ItemValid1;
+wire                       wROB_ItemValid2;
+wire                       wROB_ItemValid3;
 
 
 
@@ -455,10 +491,54 @@ always @(posedge clk or negedge resetn) begin
 end 
 
 
+//Control the IOB
+//Pop one item from IOB, until it has been processed.
+//oROB_ItemEnd can be used as an indicator.
 
+
+always @(posedge  clk or negedge resetn ) begin 
+    if (~resetn) begin 
+        sIOB <= IOB_IDLE; 
+    end else begin 
+        sIOB <= nsIOB;
+    end 
+end 
+
+always @(*) begin 
+    nsIOB = sIOB;
+    case (sIOB) 
+        IOB_IDLE : begin  
+                       if (~wEmpty4) 
+                           nsIOB = IOB_FIRST;
+                       else 
+                           nsIOB = IOB_IDLE;
+                   end
+        IOB_FIRST: begin 
+                       nsIOB = IOB_WAIT;
+                   end  
+        IOB_WAIT : begin 
+                       if (~wEmpty4&&(wROB_ItemEnd0 | wROB_ItemEnd1 | wROB_ItemEnd2 | wROB_ItemEnd3))
+                           nsIOB = IOB_FIRST;
+                       else 
+                           nsIOB = IOB_WAIT;
+                   end 
+    endcase
+end 
+//Output rRd4
 always @(posedge clk or negedge resetn) begin 
     if (~resetn) begin 
         rRd4       <= 1'b0;
+    end else begin 
+        case (sIOB) 
+            IOB_IDLE : rRd4 <= 1'b0;
+            IOB_FIRST: rRd4 <= 1'b1;
+            IOB_WAIT : rRd4 <= 1'b0;
+        endcase
+    end 
+end 
+
+always @(posedge clk or negedge resetn) begin 
+    if (~resetn) begin 
         rBankSel   <= 2'b00;
         ppRdValid4 <= 1'b0;
         rRowSel    <= 11'b0;
@@ -468,7 +548,6 @@ always @(posedge clk or negedge resetn) begin
         rROB_Rd2   <= 1'b0;
         rROB_Rd3   <= 1'b0;
     end else begin 
-        rRd4       <= ~wEmpty4 ? 1'b1 : 1'b0; 
         ppRdValid4 <= wRdValid4;
         if (wRdValid4) begin 
              rBankSel <= wRdData4[15:14];
@@ -494,6 +573,56 @@ always @(posedge clk or negedge resetn) begin
     end 
 end 
 
+
+//Process the output from the reorder_processor and IOB
+//Output to the ROB
+//wROB_ItemValid0, wROB_ItemValid1, wROB_ItemValid2, and 
+//wROB_ItemValid3 will be triggered one frame by frame. 
+always @(posedge clk or negedge resetn) begin 
+    if (~resetn) begin 
+        rWrData5 <= `ROB_ITEM_W'b0;
+        rWr5     <= 1'b0;
+        rSucROB0 <= 1'b0;
+        rSucROB1 <= 1'b0;
+        rSucROB2 <= 1'b0;
+        rSucROB3 <= 1'b0;
+    end else begin 
+        if (wROB_ItemValid0 | rSucROB0) begin 
+            rWrData5 <= {wItemBank0[23:9],wRdData4[15:14],wRdData4[10:0],wItemBank0[8:1]};
+            rWr5     <= 1'b1;
+            rSucROB0 <= wROB_ItemEnd0 ? 1'b0 : 1'b1;
+        end else if (wROB_ItemValid1 | rSucROB1) begin 
+            rWrData5 <= {wItemBank1[23:9],wRdData4[15:14],wRdData4[10:0],wItemBank1[8:1]};
+            rWr5     <= 1'b1;
+            rSucROB1 <= wROB_ItemEnd1 ? 1'b0 : 1'b1;
+        end else if (wROB_ItemValid2 | rSucROB2) begin 
+            rWrData5 <= {wItemBank2[23:9],wRdData4[15:14],wRdData4[10:0],wItemBank2[8:1]};
+            rWr5     <= 1'b1;
+            rSucROB2 <= wROB_ItemEnd2 ? 1'b0 : 1'b1;
+        end else if (wROB_ItemValid3 | rSucROB3) begin 
+            rWrData5 <= {wItemBank3[23:9],wRdData4[15:14],wRdData4[10:0],wItemBank3[8:1]};
+            rWr5     <= 1'b1;
+            rSucROB3 <= wROB_ItemEnd3 ? 1'b0 : 1'b1;
+        end else begin
+            rWr5     <= 1'b0;
+            rWrData5 <= `ROB_ITEM_W'b0;
+        end 
+    end 
+end 
+
+always @(posedge sclk) begin 
+    oClkEn<= wClkEn;
+    oAddr <= wAddr;
+    oBank <= wBank;
+    oCsn  <= wCsn;
+    oRasn <= wRasn;
+    oCasn <= wCasn;
+    oWen  <= wWen;
+    oDqm  <= wDqm;
+    rDq   <= wDq;
+end 
+assign ioDq = rDq;
+
 assign wSelA = (wRdValid0|wRdValid2)? rRoundRobin : 2'b0 ;
 
 mux_4 #(.DATA_WIDTH(45)) muxFourA (
@@ -514,8 +643,8 @@ reorder_processor ROP_Bank0 (
   .iROB_Rd(rROB_Rd0),
   .iROB_Row(ppRowSel),
   .oROB_Item(wItemBank0),
-  .oROB_ItemValid(),
-  .oROB_ItemEnd(),
+  .oROB_ItemValid(wROB_ItemValid0),
+  .oROB_ItemEnd(wROB_ItemEnd0),
   .oROB_Way(wROB_Way0),
   .oROB_WayWr(wROB_WayWr0),
   .oROB_Full(wROB_Full0),
@@ -531,8 +660,8 @@ reorder_processor ROP_Bank1 (
   .iROB_Rd(rROB_Rd1),
   .iROB_Row(ppRowSel),
   .oROB_Item(wItemBank1),
-  .oROB_ItemValid(),
-  .oROB_ItemEnd(),
+  .oROB_ItemValid(wROB_ItemValid1),
+  .oROB_ItemEnd(wROB_ItemEnd1),
   .oROB_Way(wROB_Way1),
   .oROB_WayWr(wROB_WayWr1),
   .oROB_Full(wROB_Full0),
@@ -548,8 +677,8 @@ reorder_processor ROP_Bank2 (
   .iROB_Rd(rROB_Rd2),
   .iROB_Row(ppRowSel),
   .oROB_Item(wItemBank2),
-  .oROB_ItemValid(),
-  .oROB_ItemEnd(),
+  .oROB_ItemValid(wROB_ItemValid2),
+  .oROB_ItemEnd(wROB_ItemEnd2),
   .oROB_Way(wROB_Way2),
   .oROB_WayWr(wROB_WayWr2),
   .oROB_Full(wROB_Full2),
@@ -564,15 +693,32 @@ reorder_processor ROP_Bank3 (
   .iValid(rSelBank3),
   .iROB_Rd(rROB_Rd3),
   .iROB_Row(ppRowSel),
-  .oROB_Item(rItemBank3),
-  .oROB_ItemValid(),
-  .oROB_ItemEnd(),
+  .oROB_Item(wItemBank3),
+  .oROB_ItemValid(wROB_ItemValid3),
+  .oROB_ItemEnd(wROB_ItemEnd3),
   .oROB_Way(wROB_Way3),
   .oROB_WayWr(wROB_WayWr3),
   .oROB_Full(wROB_Full3),
   .oROB_Empty(wROB_Empty3)
 );
 
+command_generate CMD_Gen (
+  .sclk(sclk),
+  .sresetn(resetn),
+  .iROB_Empty(wEmpty5),
+  .iROB_Full(wFull5),
+  .oROB_Rd(rRd5),
+  .iROB_RdData(wRdData5),
+  .oDq(wDq),
+  .oClkEn(wClkEn),
+  .oAddr(wAddr),
+  .oBank(wBank),
+  .oCsn(wCsn),
+  .oRasn(wRasn),
+  .oCasn(wCasn),
+  .oWen(wWen),
+  .oDqm(wDqm)
+);
 
 sync_fifo #(.DW(45), .AW(5) ) queueWrReq (
   .clk(clk), 
@@ -592,7 +738,7 @@ sram_2p #( .AW(5), .DW(32)) queueWrData (
   .iWrA(rWr1),
   .iAddrA(rWrAddr1),
   .iDataA(rWrData1),
-  .clkB(clk),
+  .clkB(sclk),
   .iRdB(rRd1),
   .iAddrB(rRdAddr1),
   .oDataB(wRdData1)

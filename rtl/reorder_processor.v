@@ -38,7 +38,7 @@ wire                     iLoS;
 wire                     iValid;
 wire                     iROB_Rd;
 wire [`ROW_W-1:0]        iROB_Row;
-reg  [`ROB_ITEM_W-1:0]   oROB_Item;
+reg  [`ROP_ITEM_W-1:0]   oROB_Item;
 reg                      oROB_ItemEnd;
 reg                      oROB_ItemValid;
 reg  [2:0]               oROB_Way;
@@ -74,14 +74,14 @@ reg                      rStartItem;
 reg                      rRdWay;
 wire [7:0]               wWaySel; 
 reg  [2:0]               timer;
-wire [`ROB_ITEM_W-1:0]   wRdData0; 
-wire [`ROB_ITEM_W-1:0]   wRdData1; 
-wire [`ROB_ITEM_W-1:0]   wRdData2; 
-wire [`ROB_ITEM_W-1:0]   wRdData3; 
-wire [`ROB_ITEM_W-1:0]   wRdData4; 
-wire [`ROB_ITEM_W-1:0]   wRdData5; 
-wire [`ROB_ITEM_W-1:0]   wRdData6; 
-wire [`ROB_ITEM_W-1:0]   wRdData7; 
+wire [`ROP_ITEM_W-1:0]   wRdData0; 
+wire [`ROP_ITEM_W-1:0]   wRdData1; 
+wire [`ROP_ITEM_W-1:0]   wRdData2; 
+wire [`ROP_ITEM_W-1:0]   wRdData3; 
+wire [`ROP_ITEM_W-1:0]   wRdData4; 
+wire [`ROP_ITEM_W-1:0]   wRdData5; 
+wire [`ROP_ITEM_W-1:0]   wRdData6; 
+wire [`ROP_ITEM_W-1:0]   wRdData7; 
 
 
 
@@ -204,7 +204,7 @@ end
 assign wWaySel = {wRdData0[0], wRdData1[0], wRdData2[0], wRdData3[0], wRdData4[0], wRdData5[0], wRdData6[0], wRdData7[0]};
 
 
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way0 (
+sram_2p #(.DW(`ROP_ITEM_W), .AW(`ROW_W)) rob_way0 (
   .clkA(clk), 
   .iWrA(rWrWay0),
   .iAddrA(ppWrRow),
@@ -216,7 +216,7 @@ sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way0 (
   .oDataB(wRdData0),
   .iDataB()  // NO connect
 );
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way1 (
+sram_2p #(.DW(`ROP_ITEM_W), .AW(`ROW_W)) rob_way1 (
   .clkA(clk), 
   .iWrA(rWrWay1),
   .iAddrA(ppWrRow),
@@ -228,7 +228,7 @@ sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way1 (
   .oDataB(wRdData1),
   .iDataB()  // NO connect
 );
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way2 (
+sram_2p #(.DW(`ROP_ITEM_W), .AW(`ROW_W)) rob_way2 (
   .clkA(clk), 
   .iWrA(rWrWay2),
   .iAddrA(ppWrRow),
@@ -240,7 +240,7 @@ sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way2 (
   .oDataB(wRdData2),
   .iDataB()  // NO connect
 );
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way3 (
+sram_2p #(.DW(`ROP_ITEM_W), .AW(`ROW_W)) rob_way3 (
   .clkA(clk), 
   .iWrA(rWrWay3),
   .iAddrA(ppWrRow),
@@ -252,7 +252,7 @@ sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way3 (
   .oDataB(wRdData3),
   .iDataB()  // NO connect
 );
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way4 (
+sram_2p #(.DW(`ROP_ITEM_W), .AW(`ROW_W)) rob_way4 (
   .clkA(clk), 
   .iWrA(rWrWay4),
   .iAddrA(ppWrRow),
@@ -264,7 +264,7 @@ sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way4 (
   .oDataB(wRdData4),
   .iDataB()  // NO connect
 );
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way5 (
+sram_2p #(.DW(`ROP_ITEM_W), .AW(`ROW_W)) rob_way5 (
   .clkA(clk), 
   .iWrA(rWrWay5),
   .iAddrA(ppWrRow),
@@ -276,7 +276,7 @@ sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way5 (
   .oDataB(wRdData5),
   .iDataB()  // NO connect
 );
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way6 (
+sram_2p #(.DW(`ROP_ITEM_W), .AW(`ROW_W)) rob_way6 (
   .clkA(clk), 
   .iWrA(rWrWay0),
   .iAddrA(ppWrRow),
@@ -288,7 +288,7 @@ sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way6 (
   .oDataB(wRdData6),
   .iDataB()  // NO connect
 );
-sram_2p #(.DW(`ROB_ITEM_W), .AW(`ROW_W)) rob_way7 (
+sram_2p #(.DW(`ROP_ITEM_W), .AW(`ROW_W)) rob_way7 (
   .clkA(clk), 
   .iWrA(rWrWay0),
   .iAddrA(ppWrRow),

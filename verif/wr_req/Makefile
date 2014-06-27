@@ -1,5 +1,5 @@
 VCS=/proj/cadtools/bin/vcs
-SRC=../../rtl/fifo.v ../../rtl/sync_fifo.v ../../rtl/multiplexor.v ../../rtl/sram_2p.v ../../rtl/mac.v ../../rtl/reorder_processor.v test_mac.v
+SRC=../../rtl/fifo.v ../../rtl/sync_fifo.v ../../rtl/multiplexor.v ../../rtl/sram_2p.v ../../rtl/mac.v ../../rtl/reorder_processor.v ../../rtl/command_generate.v test_mac.v
 TGT=simv
 VERICOM=/proj/cadtools/bin/vericom
 VERDI=/proj/cadtools/bin/verdi
@@ -16,7 +16,7 @@ $(TGT): $(SRC)
 	mkdir out
 	$(VCS) -sverilog $(FLAGS) $^ +define+DUMPFSDB  -sgq int
 run:
-	/proj/caeeda/SYNOPSYS/bin/simv -sgq int
+	/proj/caeeda/SYNOPSYS/bin/simv -sgq short -licwait 100
 seewave:
 	$(VERDI) -f run.f -top test -ssf ./out/mac.fsdb -sgq int -background
 clean:
