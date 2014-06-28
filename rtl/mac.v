@@ -207,7 +207,7 @@ wire [2+3+`ROW_W-1:0]      wIOBEntry2;
 wire [2+3+`ROW_W-1:0]      wIOBEntry3;
 reg                        rWr5;
 reg  [`ROB_ITEM_W-1:0]     rWrData5;
-reg                        rRd5;
+wire                       wRd5;
 wire [`ROB_ITEM_W-1:0]     wRdData5;
 wire                       wRdValid5;
 wire                       wFull5;
@@ -707,8 +707,11 @@ command_generate CMD_Gen (
   .sresetn(resetn),
   .iROB_Empty(wEmpty5),
   .iROB_Full(wFull5),
-  .oROB_Rd(rRd5),
+  .oROB_Rd(wRd5),
   .iROB_RdData(wRdData5),
+  .oQWD_Rd(wRd1), //Rd QueueWriteData
+  .oQWD_RdAddr(wRdAddr1), 
+  .iQWD_RdData(wRdData1),
   .oDq(wDq),
   .oClkEn(wClkEn),
   .oAddr(wAddr),
@@ -733,14 +736,14 @@ sync_fifo #(.DW(45), .AW(5) ) queueWrReq (
   .rempty(wEmpty0)
 );
 
-sram_2p #( .AW(5), .DW(32)) queueWrData (
+sram_2p #( .AW(5), .DW(36)) queueWrData (
   .clkA(clk),
   .iWrA(rWr1),
   .iAddrA(rWrAddr1),
   .iDataA(rWrData1),
   .clkB(sclk),
-  .iRdB(rRd1),
-  .iAddrB(rRdAddr1),
+  .iRdB(wRd1),
+  .iAddrB(wRdAddr1),
   .oDataB(wRdData1)
 );
 
@@ -801,7 +804,7 @@ async_fifo #(.DW(`ROB_ITEM_W), .AW(7) ) bufferReOrder (
   .wdata(rWrData5),
   .rclk(sclk),
   .rrst_n(resetn),
-  .rd(rRd5),
+  .rd(wRd5),
   .rdata(wRdData5),
   .wfull(wFull5),
   .rempty(wEmpty5)
