@@ -1,9 +1,18 @@
 //Author      : Alex Zhang (cgzhangwei@gmail.com)
 //Date        : Jun.27.2014
 //Description : command_generate module is to generate the sram command with read the data from ROB
+//              Notice: need to add a cmd_fifo that has no cycle concept, when push out the cycle is added according to the command type. 
+`define CMD_DADDR_RANGE 35:25
+`define CMD_SIZE_RANGE  24:23
+`define CMD_LOS_RANGE   22:21
+`define CMD_BANK_RANGE  20:19
+`define CMD_ROW_RANGE   18:8
+`define CMD_COL_RANGE    7:0
+
+
 module command_generate (
 sclk,
-sresetn,
+sresetn, 
 iROB_Empty,
 iROB_Full,
 oROB_Rd,
@@ -52,14 +61,21 @@ reg  [1:0]                 sCmdRd;
 reg  [1:0]                 nsCmdRd;
 
 //Only Four precharged Bank-Row
-reg  [1:0]                 rActiveBankRow[0:3];
+reg  [1:0]                 rActiveBank[0:3];
 //Each bank has a current active Row.
 reg  [`ROW_W-1:0]          rActiveRow[0:3];
+reg  [1:0]                 rOpenBankRow[0:3];
 reg                        rROB_Valid;
 reg  [2:0]                 rCmd;
 reg  [2:0]                 rPrevCmd;
+wire [`ROB_ITEM_W-1:0]     pp0ROB_RdData;
+wire [`ROB_ITEM_W-1:0]     pp1ROB_RdData;
+wire [`ROB_ITEM_W-1:0]     pp2ROB_RdData;
+wire [`ROB_ITEM_W-1:0]     pp3ROB_RdData;
 
 parameter tPR = 3; //Precharging needs 3 cylces
+parameter numFlush = 4;
+parameter tFlush = 8; //Flush pending request within 8cycles
 
 
 parameter hi_z=32'bz;
@@ -68,9 +84,15 @@ parameter hi_z=32'bz;
 parameter CMD_NOP         = 3'b000;
 parameter CMD_PRE_ALLBANK = 3'b100;
 parameter CMD_PRE_ONEBANK = 3'b101;
+parameter CMD_ACT         = 3'b001;
+parameter CMD_RD          = 3'b010;
+parameter CMD_WR          = 3'b011;
+parameter CMD_WRA         = 3'b111;
+parameter CMD_RDA         = 3'b110;
 
 parameter CMDRD_IDLE = 2'b00;
 parameter CMDRD_EN   = 2'b01;
+parameter CMDRD_WAIT = 2'b11;
 parameter CMDRD_ACK  = 2'b10;
 
 
@@ -84,12 +106,12 @@ always @(posedge sclk or negedge sresetn) begin
         sCmdRd <= nsCmdRd;
     end 
 end 
-
+reg rCmdDone;
 always @(*) begin 
     nsCmdRd = sCmdRd;
     case (sCmdRd) 
         CMDRD_IDLE : begin 
-                         if (~iROB_Empty)
+                         if (~iROB_Empty )
                              nsCmdRd = CMDRD_EN;
                          else 
                              nsCmdRd = CMDRD_IDLE;
@@ -98,10 +120,13 @@ always @(*) begin
                          nsCmdRd = CMDRD_IDLE; //ACK is not needed
                      end
         CMDRD_ACK  : begin 
-                         nsCmdRd = CMDRD_IDLE;
+                             nsCmdRd = CMDRD_IDLE;
                      end 
     endcase 
 end 
+
+reg  [2:0] rFlushCount;
+reg  [4:0] rFlushTimer;
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
             oROB_Rd   <= 1'b0;
@@ -123,25 +148,129 @@ always @(posedge sclk or negedge sresetn) begin
         endcase 
     end 
 end 
+//Generator will wait 12 cycles to get 4 CmdData to decide which row and bank to be access.
+//If pending request number cannnot be equal to 4, flush signal will be toggled.
+reg  [10:0]    rCmdDAddr;
+reg  [1:0]     rCmdSize;
+reg  [1:0]     rCmdLoS;
+reg  [1:0]     rCmdBank;
+reg  [10:0]    rCmdRow;
+reg  [7:0]     rCmdCol;
 
-always @(*) begin 
+always @(*) begin
+    rCmdDAddr    =  iROB_RdData[`CMD_DADDR_RANGE];
+    rCmdSize     =  iROB_RdData[`CMD_SIZE_RANGE];
+    rCmdLoS      =  iROB_RdData[`CMD_LOS_RANGE];
+    rCmdBank     =  iROB_RdData[`CMD_BANK_RANGE];
+    rCmdRow      =  iROB_RdData[`CMD_ROW_RANGE];
+    rCmdCol      =  iROB_RdData[`CMD_COL_RANGE];
+end 
 
-
-end
+//It is better to have 4 queueCmd for each bank, and there is a 
+//bank selection algorithm. Now we just have one.
+always @(posedge sclk or negedge sresetn) begin 
+    if (~sresetn) begin 
+        rActiveBank[0] <= 2'b00;
+        rActiveBank[1] <= 2'b00;
+        rActiveBank[2] <= 2'b00;
+        rActiveBank[3] <= 2'b00;
+        rActiveRow[0]  <= 11'b0;
+        rActiveRow[0]  <= 11'b0;
+        rActiveRow[0]  <= 11'b0;
+        rActiveRow[0]  <= 11'b0;
+    end else begin 
+        if (rROB_Valid) begin 
+             if (rCmdBank == rActiveBank[0] && rCmdRow == rActiveRow[0]) begin 
+                 plru_bank_row0;
+                 if (rCmdLos==2'b01) begin //Write
+                     rWrDataCmd <= {rCmdDAddr, rCmdBank, rCmdRow, rCmdCol ,CMD_WR};
+                     rWrCmd     <= 1'b1;
+                 end else if (rCmdLos==2'b10) begin
+                     rWrDataCmd <= {11'b0, rCmdBank, rCmdRow, rCmdCol ,CMD_RD};
+                     rWrCmd     <= 1'b1;
+                 end 
+             end else if (rCmdBank == rActiveBank[1] && rCmdRow == rActiveRow[1]) begin 
+                 plru_bank_row1;
+                 if (rCmdLos==2'b01) begin //Write
+                     rWrDataCmd <= {rCmdDAddr, rCmdBank, rCmdRow, rCmdCol ,CMD_WR};
+                     rWrCmd     <= 1'b1;
+                 end else if (rCmdLos==2'b10) begin
+                     rWrDataCmd <= {11'b0, rCmdBank, rCmdRow, rCmdCol ,CMD_RD};
+                     rWrCmd     <= 1'b1;
+                 end 
+             end else if (rCmdBank == rActiveBank[2] && rCmdRow == rActiveRow[2]) begin 
+                 plru_bank_row2;
+                 if (rCmdLos==2'b01) begin //Write
+                     rWrDataCmd <= {rCmdDAddr, rCmdBank, rCmdRow, rCmdCol ,CMD_WR};
+                     rWrCmd     <= 1'b1;
+                 end else if (rCmdLos==2'b10) begin
+                     rWrDataCmd <= {11'b0, rCmdBank, rCmdRow, rCmdCol ,CMD_RD};
+                     rWrCmd     <= 1'b1;
+                 end 
+             end else if (rCmdBank == rActiveBank[3] && rCmdRow == rActiveRow[3]) begin 
+                 plru_bank_row3;
+                 if (rCmdLos==2'b01) begin //Write
+                     rWrDataCmd <= {rCmdDAddr, rCmdBank, rCmdRow, rCmdCol ,CMD_WR};
+                     rWrCmd     <= 1'b1;
+                 end else if (rCmdLos==2'b10) begin
+                     rWrDataCmd <= {11'b0, rCmdBank, rCmdRow, rCmdCol ,CMD_RD};
+                     rWrCmd     <= 1'b1;
+                 end 
+             end else begin 
+                 if (rCmdLos==2'b01) begin //Write
+                     rWrDataCmd <= {rCmdDAddr, rCmdBank, rCmdRow, rCmdCol ,CMD_WRA};
+                     rWrCmd     <= 1'b1;
+                 end else if (rCmdLos==2'b10) begin
+                     rWrDataCmd <= {11'b0, rCmdBank, rCmdRow, rCmdCol ,CMD_RDA};
+                     rWrCmd     <= 1'b1;
+                 end 
+                 if (rOpenBankRow[0]==2'b00) begin 
+                      rActiveBank[0] = rCmdBank;
+                      rActiveRow[0]  = rCmdRow;
+                      plru_bank_row0;
+                 end else if (rOpenBankRow[1]==2'b00) begin 
+                      rActiveBank[1] = rCmdBank;
+                      rActiveRow[1]  = rCmdRow;
+                      plru_bank_row1;
+                 end else if (rOpenBankRow[2]==2'b00) begin 
+                      rActiveBank[2] = rCmdBank;
+                      rActiveRow[2]  = rCmdRow;
+                      plru_bank_row2;
+                 end else if (rOpenBankRow[3]==2'b00) begin 
+                      rActiveBank[3] = rCmdBank;
+                      rActiveRow[3]  = rCmdRow;
+                      plru_bank_row3;
+                 end
+             end 
+        end else begin 
+             rWrCmd <= 1'b0;
+             rWrDataCmd <= 35'b0;
+        end 
+    end
+end 
 
 reg [3:0]  timer;
-
 //Command control logic 
+//
 //timer controller
 always @(posedge sclk or negedge sresetn) begin 
     if(~sresetn) begin 
        rCmd     <= CMD_PRE_ALLBANK;
        rPrevCmd <= CMD_PRE_ALLBANK;
-       timer    <= tPR;
     end else begin 
        if (timer == 4'b0 && rPrevCmd == CMD_PRE_ALLBANK) begin 
+           rPrevCmd <= rCmd;
            rCmd <= CMD_NOP;
-       end  
+       end else if (timer == 4'b0 && rCmd == CMD_PRE_ONEBANK) begin 
+           rPrevCmd <= rCmd;
+           rCmd <= CMD_ACT;
+       end  else if (rFlushCount == 3'b1) begin 
+           rPrevCmd <= rCmd;
+           rCmd <= CMD_PRE_ONEBANK;
+           timer <= tPR;
+           rActiveBankRow[0] <= rCmdBank0; 
+           rActiveRow[0]     <= rCmdRow0;
+       end 
        timer <= (timer == 4'b0) ? 4'b0 : (timer - 4'b1);
     end 
 end 
@@ -165,9 +294,23 @@ always @(posedge sclk or negedge sresetn) begin
         endcase
 
     end 
-
-
 end 
+
+sync_fifo#(.DW(), .AW())  queueCmd (
+  .clk(sclk),
+  .resetn_n(sresetn),
+  .flush(1'b0),
+  .wr(rWrCmd),
+  .rd(rRdCmd),
+  .wdata(rWrDataCmd),
+  .rdata(rRdDataCmd),
+  .rdata_valid(wRdValidCmd),
+  .wfull(wFullCmd),
+  .rempty(wEmptyCmd)
+
+);
+
+
 task precharge_all_bank;
     input  [3 : 0] dqm_in;
     input [31 : 0] dq_in;
@@ -198,5 +341,28 @@ task nop;
         rDq    = dq_in;
     end
 endtask
-
+task plru_bank_row0; 
+    rOpenBankRow[0] <= 2'b11;
+    rOpenBankRow[1] <= rOpenBankRow[1]==2'b00 ? rOpenBankRow[1]: rOpenBankRow[1]-2'b1 ; 
+    rOpenBankRow[2] <= rOpenBankRow[2]==2'b00 ? rOpenBankRow[2]: rOpenBankRow[2]-2'b1 ; 
+    rOpenBankRow[3] <= rOpenBankRow[3]==2'b00 ? rOpenBankRow[3]: rOpenBankRow[3]-2'b1 ; 
+endtask
+task plru_bank_row1; 
+    rOpenBankRow[1] <= 2'b11;
+    rOpenBankRow[0] <= rOpenBankRow[0]==2'b00 ? rOpenBankRow[0]: rOpenBankRow[0]-2'b1 ; 
+    rOpenBankRow[2] <= rOpenBankRow[2]==2'b00 ? rOpenBankRow[2]: rOpenBankRow[2]-2'b1 ; 
+    rOpenBankRow[3] <= rOpenBankRow[3]==2'b00 ? rOpenBankRow[3]: rOpenBankRow[3]-2'b1 ; 
+endtask
+task plru_bank_row2; 
+    rOpenBankRow[2] <= 2'b11;
+    rOpenBankRow[1] <= rOpenBankRow[1]==2'b00 ? rOpenBankRow[1]: rOpenBankRow[1]-2'b1 ; 
+    rOpenBankRow[0] <= rOpenBankRow[0]==2'b00 ? rOpenBankRow[0]: rOpenBankRow[0]-2'b1 ; 
+    rOpenBankRow[3] <= rOpenBankRow[3]==2'b00 ? rOpenBankRow[3]: rOpenBankRow[3]-2'b1 ; 
+endtask
+task plru_bank_row3; 
+    rOpenBankRow[3] <= 2'b11;
+    rOpenBankRow[1] <= rOpenBankRow[1]==2'b00 ? rOpenBankRow[1]: rOpenBankRow[1]-2'b1 ; 
+    rOpenBankRow[2] <= rOpenBankRow[2]==2'b00 ? rOpenBankRow[2]: rOpenBankRow[2]-2'b1 ; 
+    rOpenBankRow[0] <= rOpenBankRow[0]==2'b00 ? rOpenBankRow[0]: rOpenBankRow[0]-2'b1 ; 
+endtask
 endmodule 
