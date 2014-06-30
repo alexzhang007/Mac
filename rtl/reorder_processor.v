@@ -34,7 +34,7 @@ output oROB_Full;
 output oROB_Empty;
 
 wire [`REQWR_INFO_W-1:0] iReqItem;
-wire                     iLoS;
+wire [1:0]               iLoS;
 wire                     iValid;
 wire                     iROB_Rd;
 wire [`ROW_W-1:0]        iROB_Row;
@@ -53,7 +53,7 @@ reg  [1:0]               rReqSize;
 reg  [1:0]               rWrSize; 
 reg                      ppValid;
 reg                      pp2Valid;
-reg                      ppLoS;
+reg  [1:0]               ppLoS;
 reg  [`ROW_W-1: 0 ]      rRdRow;
 reg  [`ROW_W-1: 0 ]      ppWrRow;
 reg  [23:0]              rWrData;
@@ -95,7 +95,7 @@ always @(posedge clk or negedge resetn) begin
     if (~resetn) begin 
         ppValid        <= 1'b0;
         pp2Valid       <= 1'b0;
-        ppLoS          <= 1'b0;
+        ppLoS          <= 2'b0;
         rWrRow         <= 11'b0;
         ppWrRow        <= 11'b0;
         rWrDataIndex   <= 3'b0;
@@ -304,7 +304,7 @@ sram_2p #(.DW(`ROP_ITEM_W), .AW(`ROW_W)) rob_way7 (
 
 //To record which way when the same row has hit
 //When there is write and read to the reprocessor, will there be a conflict to the way_index.
-sram_2p #(.DSIZE(4), .ASIZE(`ROW_W)) way_index (
+sram_2p #(.DW(4), .AW(`ROW_W)) way_index (
   .clkA(clk), 
   .iWrA(pp2Valid| pp2ROB_Rd),
   .iAddrA(rReqRow),

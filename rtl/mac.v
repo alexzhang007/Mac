@@ -172,12 +172,12 @@ reg  [4:0]                 rWrAddr1;
 reg  [1:0]                 rRoundRobin;
 reg                        rRd0;
 reg                        rRd2;
-reg                        rLoS;
+reg  [1:0]                 rLoS;
 reg                        rSelBank0;
 reg                        rSelBank1;
 reg                        rSelBank2;
 reg                        rSelBank3;
-reg                        ppLoS;
+reg  [1:0]                 ppLoS;
 reg  [`REQWR_INFO_W-1:0]   ppReqQItem; //45
 wire [`REQWR_INFO_W-1:0]   wReqQItem; //45
 wire [`REQWR_INFO_W-1:0]   wRdData0; //45
@@ -394,43 +394,43 @@ always @(posedge clk or negedge resetn) begin
         rRoundRobin <= 2'b00;
         rRd0        <= 1'b0;
         rRd2        <= 1'b0;
-        rLoS        <= 1'b0; //Write Queue in default - Store->1'b0
+        rLoS        <= 2'b0; //Write Queue in default - Store->1'b0
     end else begin 
         if (~wEmpty0 & wEmpty2 & rRoundRobin ==2'b00) begin 
             rRoundRobin <= 2'b01;
             rRd0        <= 1'b1;
             rRd2        <= 1'b0;
-            rLoS        <= 1'b0; //Write Queue - Store->1'b0
+            rLoS        <= 2'b01; //Write Queue - Store->1'b0
         end else if (wEmpty0 & ~wEmpty2 & rRoundRobin == 2'b00) begin 
             rRoundRobin <= 2'b10;
             rRd0        <= 1'b0;
             rRd2        <= 1'b1;
-            rLoS        <= 1'b1; //Read Queue - Load->1'b0
+            rLoS        <= 2'b10; //Read Queue - Load->1'b0
         end else if (~wEmpty0 &rRoundRobin == 2'b10 ) begin 
             rRoundRobin <= 2'b01;
             rRd0        <= 1'b1;
             rRd2        <= 1'b0;
-            rLoS        <= 1'b0; //Write Queue - Load->1'b0
+            rLoS        <= 2'b01; //Write Queue - Load->1'b0
         end else if (~wEmpty0 &wEmpty2 &rRoundRobin == 2'b01 ) begin 
             rRoundRobin <= 2'b01;
             rRd0        <= 1'b1;
             rRd2        <= 1'b0;
-            rLoS        <= 1'b0; //Write Queue - Load->1'b0
+            rLoS        <= 2'b01; //Write Queue - Load->1'b0
         end else if (~wEmpty2 &rRoundRobin == 2'b01) begin 
             rRoundRobin <= 2'b10;
             rRd0        <= 1'b0;
             rRd2        <= 1'b1;
-            rLoS        <= 1'b1; //Read Queue - Load->1'b0
+            rLoS        <= 2'b10; //Read Queue - Load->1'b0
         end else if (wEmpty0 & ~wEmpty2 &rRoundRobin == 2'b10) begin 
             rRoundRobin <= 2'b10;
             rRd0        <= 1'b0;
             rRd2        <= 1'b1;
-            rLoS        <= 1'b1; //Read Queue - Load->1'b0
+            rLoS        <= 2'b10; //Read Queue - Load->1'b0
         end else begin 
             rRoundRobin <= 2'b00;
             rRd0        <= 1'b0;
             rRd2        <= 1'b0;
-            rLoS        <= 1'b0; //Write Queue in default - Store->1'b0
+            rLoS        <= 2'b01; //Write Queue in default - Store->1'b0
         end 
     end 
 end  
@@ -443,7 +443,7 @@ always @(posedge clk or negedge resetn) begin
         rSelBank1  <= 1'b0;
         rSelBank2  <= 1'b0;
         rSelBank3  <= 1'b0;
-        ppLoS      <= 1'b0;
+        ppLoS      <= 2'b0;
         ppReqQItem <= 45'b0;
         ppReqBank  <= 2'b0;
         pp1ReqBank <= 2'b0;
