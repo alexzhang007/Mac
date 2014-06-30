@@ -326,36 +326,49 @@ always @(posedge sclk or negedge sresetn) begin
        if (wRdValidCmd) begin 
            case (rOpCmd)
               CMD_WRA :  begin 
-                             rDoWrP    <= 1'b1;
+                             rDoWrP       <= 1'b1;
                              rFetchWrData <= 1'b1;
                          end 
            endcase  
        end 
     end 
 end 
-
+reg       rTimerEn; 
+reg [3:0] rTimerInit;
+reg [3:0] rTimerCycle;
+reg       ppRdValidCmd; 
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
-        rCmd <= CMD_PRE_ALLBANK;
+        rCmd         <= CMD_PRE_ALLBANK;
+        rTimerEn     <= 1'b0;
+        rTimerInit   <= 4'b0000;
+        rTimerCycle  <= 4'b0;
+        timer        <= 4'b0;
+        ppRdValidCmd <= 1'b0;
+        oQWD_Rd      <= 1'b0;
+        oQWD_RdAddr  <= 5'b0;
     end else begin 
-        if (rDoWrP) begin 
-             timer <= timer - 1'b1;
-        end else begin 
-             timer <= 4'b0000;
-        end 
-        if (rDoWrP) begin 
-             rCmd <= CMD_ACT;
-             timer <= tACT;
+        ppRdValidCmd <= wRdValidCmd;
+        timer <= rTimerEn ? (rTimerInit ) : 
+                 rDoWrP   ? (timer - 4'b1): 4'b1111; //The default value is 4'b to avoid the timerExpire=1 at first
+        if (rDoWrP & ~timerExpired & rCmd == CMD_PRE_ALLBANK) begin 
+             rTimerEn <= ppRdValidCmd; 
+             rTimerCycle <= rTimerCycle + 4'b1;
+             rCmd        <= CMD_ACT;
+             rTimerInit  <= tACT;
         end  else if (rDoWrP & timerExpired & rCmd==CMD_ACT) begin 
-             rCmd <= CMD_WR;
-             timer <= tWR;
+             rCmd        <= CMD_WR;
+             rTimerInit  <= tWR;
+             rTimerEn    <= timerExpired;
+             oQWD_Rd     <= timerExpired;
+             oQWD_RdAddr <= rColCmd[6:2];
         end  else if (rDoWrP & timerExpired & rCmd==CMD_WR) begin 
-             rCmd <= CMD_PRE_ONEBANK; 
-             timer <= tPR; 
+             rCmd        <= CMD_PRE_ONEBANK; 
+             rTimerInit  <= tPR; 
+             rTimerEn    <= timerExpired;
+        end else begin 
+             rTimerEn    <= 1'b0;
         end 
-        rFetchWrData <= rFetchWrData ? 1'b0 : 1'b0;
-        oQWD_Rd      <= rFetchWrData;
-        oQWD_RdAddr  <= rColCmd[6:2];
     end  
 end 
 

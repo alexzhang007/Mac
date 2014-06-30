@@ -241,6 +241,9 @@ wire                       wROB_ItemValid0;
 wire                       wROB_ItemValid1;
 wire                       wROB_ItemValid2;
 wire                       wROB_ItemValid3;
+wire [4:0]                 wRdAddr1;
+wire [35:0]                wRdData1;
+wire                       wRd1;
 
 
 
@@ -305,35 +308,39 @@ always @(*) begin
                           end
     endcase
 end 
+reg [2:0]  rAddrOffset;//256/32=8
 
 always @(posedge clk or negedge resetn) begin 
     if (~resetn) begin 
-        rWr0     <= 1'b0;
-        rWrData0 <= 45'b0;
-        rWr1     <= 1'b0;
-        rWrData1 <= 36'b0;
+        rWr0       <= 1'b0;
+        rWrData0   <= 45'b0;
+        rWr1       <= 1'b0;
+        rWrData1   <= 36'b0;
+        rAddrOffset<= 3'b000;
     end else begin 
         case (sMacWr)
             REQ_IDLE      : begin 
-                                rWr0     <= 1'b0;
-                                rWrData0 <= 45'b0;
-                                rWr1     <= 1'b0;
-                                rWrData1 <= 36'b0;
+                                rWr0       <= 1'b0;
+                                rWrData0   <= 45'b0;
+                                rWr1       <= 1'b0;
+                                rWrData1   <= 36'b0;
                             end 
             REQ_FETCH_REQ : begin  
-                                rWr0     <= 1'b1;
-                                rWrData0 <= rMACWrInfo ;
+                                rWr0       <= 1'b1;
+                                rWrData0   <= rMACWrInfo ;
                             end 
             REQ_FETCH_DATA: begin 
-                                rWr0     <= 1'b0; //FIXME: Performance is very low for data 
-                                rWrData0 <= 45'b0;
-                                rWr1     <= 1'b1;
-                                rWrData1 <= {pp2MAC_DataWr, pp2MAC_MaskWr} ; 
-                                rWrAddr1 <= ppMACAddrWr[6:2];
+                                rWr0       <= 1'b0; //FIXME: Performance is very low for data 
+                                rWrData0   <= 45'b0;
+                                rWr1       <= 1'b1;
+                                rWrData1   <= {pp2MAC_DataWr, pp2MAC_MaskWr} ; 
+                                rWrAddr1   <= ppMACAddrWr[6:2]+rAddrOffset;
+                                rAddrOffset<= rAddrOffset + 3'b1;
                            end 
             REQ_LAST_DATA: begin 
-                                rWr1     <= 1'b1;
-                                rWrData1 <= {pp2MAC_DataWr, pp2MAC_MaskWr} ; 
+                                rWr1       <= 1'b1;
+                                rWrData1   <= {pp2MAC_DataWr, pp2MAC_MaskWr} ; 
+                                rWrAddr1   <= ppMACAddrWr[6:2]+rAddrOffset;
                            end 
         endcase
     end 
@@ -701,7 +708,6 @@ reorder_processor ROP_Bank3 (
   .oROB_Full(wROB_Full3),
   .oROB_Empty(wROB_Empty3)
 );
-
 command_generate CMD_Gen (
   .sclk(sclk),
   .sresetn(resetn),
