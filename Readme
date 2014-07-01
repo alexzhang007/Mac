@@ -18,6 +18,10 @@ This module is to interface with sram, dealing with requests coming from MAI and
  Add an additional reorder_processor.v
 *Jun.27.2014
  Add the command_generate module to interface with SDRAM
+*Jun.28.2014
+ Write request to sram is finished, but needs RTL compile pass
+*Jul.01.2014
+ Write request to sram is passed with one request. Supporting back to back write(no case has yet verified it). 
 
 [1] ORGFXSoC-master/orpsocv2/boards/xilinx/ml501/rtl/verilog/xilinx_ssram.v
 [2] MT48LC2M32B2-512K x 32 x 4banks, Micro. 

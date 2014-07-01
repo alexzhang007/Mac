@@ -7,6 +7,7 @@ module sram_2p (
   oDataA,
   iDataA,
   clkB,
+  resetnB,
   iRdB,
   iAddrB,
   oDataB,
@@ -24,6 +25,7 @@ module sram_2p (
   input            iWrA;
   output [DW-1:0]  oDataB;
   input            clkB;
+  input            resetnB;
   input [AW-1:0]   iAddrB;
   input [DW-1:0]   iDataB;
   input            iRdB;
@@ -49,7 +51,10 @@ end
   end
 
   // read with WEN
-  always @(posedge clkB) begin
-    if (iRdB ) oDataB <= mem[iAddrB];
+  always @(posedge clkB or negedge resetnB) begin
+    if (~resetnB)
+        oDataB <= {DW{1'b0}};
+    else 
+        if (iRdB ) oDataB <= mem[iAddrB];
   end
 endmodule

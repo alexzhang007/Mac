@@ -1,0 +1,3 @@
+Write request with Open Row Policy verification
+*Jul.01.2014
+ Commang generate will wait 2 ROB items within 4 cycles, otherwise it will flush the active Item. 

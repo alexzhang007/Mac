@@ -748,6 +748,7 @@ sram_2p #( .AW(5), .DW(36)) queueWrData (
   .iAddrA(rWrAddr1),
   .iDataA(rWrData1),
   .clkB(sclk),
+  .resetnB(sresetn),
   .iRdB(wRd1),
   .iAddrB(wRdAddr1),
   .oDataB(wRdData1)
