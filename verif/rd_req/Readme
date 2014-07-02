@@ -1,0 +1,10 @@
+Read request with Open Row Policy verification
+*Jul.02.2014
+ Register    : rReadBurst 
+ Description : Cache prefetch needs 8 bursts, while normal data update needs only 1 burst. 
+ Field   2:0 : Burst Length. 0-1 burst; 1-2 bursts; 2-4 bursts; 3-8 bursts. 
+ Field     3 : Burst Type.   0-Sequential; 1-Interleaved. 
+ Field   6:4 : CAS Latecny.  1-tCAS is 1 cycle; 2-tCAS is 2 cycles; 3-tCAS is 3 cycles. 
+ Field     9 : Write Burst Mode. 0-Programmed Burst Length. 1-Single Location Access. 
+
+ Before ROB buffer is already, issuing the Precharging all bank command and load mode register into sdram controller. .

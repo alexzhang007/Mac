@@ -20,7 +20,7 @@
 `define CMD_BANK_RANGE  23:22
 `define CMD_ROW_RANGE   21:11
 `define CMD_COL_RANGE   10:3
-`define CMD_OP_RANGE     2:0
+`define CMD_OP_RANGE     3:0
 `define CMD_DATA_RANGE  35:4
 `define CMD_MASK_RANGE   3:0
 
@@ -81,8 +81,8 @@ reg                        oRasn;
 reg                        oCasn;
 reg                        oWen;
 reg  [3:0]                 oDqm;
-reg  [1:0]                 sCmdRd;
-reg  [1:0]                 nsCmdRd;
+reg  [2:0]                 sCmdRd;
+reg  [2:0]                 nsCmdRd;
 
 //Only Four precharged Bank-Row
 reg  [1:0]                 rActiveBank[0:3];
@@ -90,7 +90,7 @@ reg  [1:0]                 rActiveBank[0:3];
 reg  [`ROW_W-1:0]          rActiveRow[0:3];
 reg  [1:0]                 rOpenBankRow[0:3];
 reg                        rROB_Valid;
-reg  [2:0]                 rCmd;
+reg  [3:0]                 rCmd;
 reg  [2:0]                 rPrevCmd;
 wire [`ROB_ITEM_W-1:0]     pp0ROB_RdData;
 wire [`ROB_ITEM_W-1:0]     pp1ROB_RdData;
@@ -104,12 +104,12 @@ reg  [10:0]                rRobRow;
 reg  [7:0]                 rRobCol;
 reg                        rWrCmd;
 reg                        rRdCmd;
-reg  [34:0]                rWrDataCmd;
-reg  [34:0]                rActiveDataCmd[0:3];
+reg  [35:0]                rWrDataCmd;
+reg  [35:0]                rActiveDataCmd[0:3];
 wire                       wEmptyCmd;
 wire                       wFullCmd;
 wire                       wRdValidCmd;
-reg  [2:0]                 rOpCmd;
+reg  [3:0]                 rOpCmd;
 reg  [10:0]                rRowCmd;
 reg  [7:0]                 rColCmd;
 reg  [1:0]                 rBankCmd;
@@ -120,11 +120,20 @@ reg  [3:0]                 timer;
 wire                       timerExpired; 
 reg  [15:0]                timerRefresh;
 wire                       timerExpiredRefresh;
-wire [34:0]                wRdDataCmd;
+wire [35:0]                wRdDataCmd;
 reg                        rDoWrP;
 reg                        rFetchWrData;
 reg                        rHitBtB;
+reg  [2:0]                 rFlushCount;
+reg  [4:0]                 rFlushTimer;
+wire                       wFlushExpired ;
+reg                        rCmdDone;
+reg  [3:0]                 timerROB;
+wire                       wROBExpired ;
+reg                        rDoPreAllBank;
+reg                        rDoLoadReg;
 
+reg  [31:0]                rBurstMode;
 
 parameter tPR  = 3;   //Precharging duration is 10ns, needs 3 cylces
 parameter tWR  = 2;
@@ -136,7 +145,9 @@ parameter tRAS = 12;  //Row active to Auto Precharging 40ns;
 parameter tCAS = 3 ;  //Column Access Strobe latency. Duration between column access command and data return by DRAM device. Also known as tCL
 parameter tRC  = 15;  //Row cycle. Time duration accesses to different rows in same bank. tRC = tRAS + tRP;
 parameter tCP  = 6 ;  //Colum access to Auto Precharging tCP= tRAS-tRCD-tCAS <Self Define Parameter>
-
+parameter tCWD = 1 ;  //Column Wite Delay. Time interval between issuuance of column write command and placement of data on data bus by the DRAM controller. Here it is 1 cycle for DDR SDRAM. 
+parameter tLD  = 5;   //LoaD registers into SDRAM
+parameter tBL  = 8;   //Read Data Burst length. 
 
 parameter nFlush = 4;
 parameter tFlush = 15; //Flush pending request within tRC cycles
@@ -145,20 +156,26 @@ parameter tFlush = 15; //Flush pending request within tRC cycles
 parameter hi_z=32'bz;
 
 
-parameter CMD_NOP         = 3'b000;
-parameter CMD_PRE_ALLBANK = 3'b100;
-parameter CMD_PRE_ONEBANK = 3'b101;
-parameter CMD_ACT         = 3'b001;
-parameter CMD_RD          = 3'b010;
-parameter CMD_WR          = 3'b011;
-parameter CMD_WRA         = 3'b111;
-parameter CMD_RDA         = 3'b110;
-parameter CMD_SELF_REFRESH= 3'b111;
+parameter CMD_NOP         = 4'b0000;
+parameter CMD_PRE_ALLBANK = 4'b0100;
+parameter CMD_PRE_ONEBANK = 4'b0101;
+parameter CMD_ACT         = 4'b0001;
+parameter CMD_RD          = 4'b0010;
+parameter CMD_WR          = 4'b0011;
+parameter CMD_WRA         = 4'b0111;
+parameter CMD_RDA         = 4'b0110;
+parameter CMD_SELF_REFRESH= 4'b0111;
+parameter CMD_DATA        = 4'b1000;
+parameter CMD_LOAD_REG    = 4'b1111;
 
-parameter CMDRD_IDLE = 2'b00;
-parameter CMDRD_EN   = 2'b01;
-parameter CMDRD_WAIT = 2'b11;
-parameter CMDRD_ACK  = 2'b10;
+parameter CMDRD_INIT = 3'b100;
+parameter CMDRD_INIT2= 3'b110;
+parameter CMDRD_LOAD = 3'b101;
+parameter CMDRD_LOAD2= 3'b111;
+parameter CMDRD_IDLE = 3'b000;
+parameter CMDRD_EN   = 3'b001;
+parameter CMDRD_WAIT = 3'b011;
+parameter CMDRD_ACK  = 3'b010;
 
 
 assign oDq = rDq;
@@ -166,15 +183,33 @@ assign oDq = rDq;
 //Logic to control the popped data from ROB
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
-        sCmdRd <= CMDRD_IDLE;
+        sCmdRd <= CMDRD_INIT;
+        rBurstMode <= { 24'b0,3'b11,1'b0,1'b0,3'b000};
     end else begin 
         sCmdRd <= nsCmdRd;
     end 
 end 
-reg rCmdDone;
 always @(*) begin 
     nsCmdRd = sCmdRd;
     case (sCmdRd) 
+        CMDRD_INIT : begin 
+                         nsCmdRd = CMDRD_INIT2;
+                     end
+        CMDRD_INIT2: begin 
+                         if (wROBExpired)
+                             nsCmdRd = CMDRD_LOAD;
+                         else 
+                             nsCmdRd = CMDRD_INIT2;
+                     end
+        CMDRD_LOAD : begin 
+                         nsCmdRd = CMDRD_LOAD2;
+                     end
+        CMDRD_LOAD2: begin 
+                         if (wROBExpired)
+                             nsCmdRd = CMDRD_IDLE;
+                         else 
+                             nsCmdRd = CMDRD_LOAD2;
+                     end
         CMDRD_IDLE : begin 
                          if (~iROB_Empty )
                              nsCmdRd = CMDRD_EN;
@@ -189,11 +224,59 @@ always @(*) begin
                      end 
     endcase 
 end 
+
+assign wROBExpired = ~(|timerROB) ;
+
+always @(posedge sclk or negedge sresetn) begin 
+    if (~sresetn) begin 
+            oROB_Rd       <= 1'b0;
+            rROB_Valid    <= 1'b0;
+            timerROB      <= 4'b1111;
+            rDoPreAllBank <= 1'b0;
+            rDoLoadReg    <= 1'b0;
+    end else begin 
+        timerROB <= (rDoPreAllBank|rDoLoadReg) ? timerROB - 4'b1 : timerROB;
+        case (sCmdRd) 
+            CMDRD_INIT : begin  //precharging all the banks
+                             timerROB      <= tCBR -1;
+                             rDoPreAllBank <= 1'b1;
+                             rDoLoadReg    <= 1'b0;
+                         end
+            CMDRD_INIT2: begin  //precharging all the banks
+                             rDoPreAllBank <= 1'b1;
+                             rDoLoadReg    <= 1'b0;
+                         end
+            CMDRD_LOAD : begin 
+                             timerROB      <= tLD -1;
+                             rDoPreAllBank <= 1'b0;
+                             rDoLoadReg    <= 1'b1;
+                         end 
+            CMDRD_LOAD : begin 
+                             rDoPreAllBank <= 1'b0;
+                             rDoLoadReg    <= 1'b1;
+                         end
+            CMDRD_IDLE : begin   
+                             oROB_Rd       <= 1'b0;
+                             rROB_Valid    <= 1'b0;
+                             rDoPreAllBank <= 1'b0;
+                             rDoLoadReg    <= 1'b0;
+                         end 
+            CMDRD_EN   : begin 
+                             oROB_Rd       <= 1'b1;
+                             rROB_Valid    <= 1'b1;
+                         end 
+            CMDRD_ACK  : begin 
+                             oROB_Rd       <= 1'b0;
+                             rROB_Valid    <= 1'b0;
+                         end 
+        endcase 
+    end 
+end 
+
+
 //When rROB_Valid is asserted, rFlushCount++; when rFlushCount==2, it will push the ActiveBank/Row/Col w/o AutoPrecharge into CmdQueue. 
 //Otherwise, it will wait 6 cycles to flush the ActiveBank/Row/Col w/ AutoPrecharge into CmdQueue; 
-reg  [2:0] rFlushCount;
-reg  [4:0] rFlushTimer;
-wire  wFlushExpired = ~(|rFlushTimer);
+assign wFlushExpired = ~(|rFlushTimer);
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
         rFlushCount <= 3'b0;
@@ -211,29 +294,6 @@ always @(posedge sclk or negedge sresetn) begin
     end 
 end
 
-
-
-always @(posedge sclk or negedge sresetn) begin 
-    if (~sresetn) begin 
-            oROB_Rd   <= 1'b0;
-            rROB_Valid<= 1'b0;
-    end else begin 
-        case (sCmdRd) 
-            CMDRD_IDLE : begin   
-                             oROB_Rd    <= 1'b0;
-                             rROB_Valid <= 1'b0;
-                         end 
-            CMDRD_EN   : begin 
-                             oROB_Rd    <= 1'b1;
-                             rROB_Valid <= 1'b1;
-                         end 
-            CMDRD_ACK  : begin 
-                             oROB_Rd    <= 1'b0;
-                             rROB_Valid <= 1'b0;
-                         end 
-        endcase 
-    end 
-end 
 //Generator will wait 12 cycles to get 4 CmdData to decide which row and bank to be access.
 //If pending request number cannnot be equal to 4, flush signal will be toggled.
 
@@ -261,46 +321,46 @@ always @(posedge sclk or negedge sresetn) begin
         rActiveRow[3]     <= 11'b0;
         rWrCmd            <= 1'b0;
         rHitBtB           <= 1'b0;
-        rWrDataCmd        <= 35'b0;
+        rWrDataCmd        <= 36'b0;
         rOpenBankRow[0]   <= 2'b00;
         rOpenBankRow[1]   <= 2'b00;
         rOpenBankRow[2]   <= 2'b00;
         rOpenBankRow[3]   <= 2'b00;
-        rActiveDataCmd[0] <= 35'b0;
-        rActiveDataCmd[1] <= 35'b0;
-        rActiveDataCmd[2] <= 35'b0;
-        rActiveDataCmd[3] <= 35'b0;
+        rActiveDataCmd[0] <= 36'b0;
+        rActiveDataCmd[1] <= 36'b0;
+        rActiveDataCmd[2] <= 36'b0;
+        rActiveDataCmd[3] <= 36'b0;
     end else begin 
         if (rROB_Valid ) begin 
             if (rRobBank == rActiveBank[0] && rRobRow == rActiveRow[0]) begin 
-                rWrDataCmd        <= rActiveDataCmd[0][2:0] == CMD_WRA ? {rActiveDataCmd[0][34:3], CMD_WR } :
-                                     rActiveDataCmd[0][2:0] == CMD_RDA ? {rActiveDataCmd[0][34:3], CMD_RD } :  35'b0   ;
+                rWrDataCmd        <= rActiveDataCmd[0][3:0] == CMD_WRA ? {rActiveDataCmd[0][35:4], CMD_WR } :
+                                     rActiveDataCmd[0][3:0] == CMD_RDA ? {rActiveDataCmd[0][35:4], CMD_RD } :  36'b0   ;
                 rActiveDataCmd[0] <= rRobLoS==2'b01 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_WRA } :
-                                     rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 35'b0;
+                                     rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 36'b0;
                 plru_bank_row0;
                 rWrCmd            <= 1'b1;
                 rHitBtB           <= 1'b1;  //Hit Back to Back Read or Write
             end else if (rRobBank == rActiveBank[1] && rRobRow == rActiveRow[1]) begin 
-                rWrDataCmd        <= rActiveDataCmd[1][2:0] == CMD_WRA ? {rActiveDataCmd[1][34:3], CMD_WR } :
-                                     rActiveDataCmd[1][2:0] == CMD_RDA ? {rActiveDataCmd[1][34:3], CMD_RD } :  35'b0   ;
+                rWrDataCmd        <= rActiveDataCmd[1][3:0] == CMD_WRA ? {rActiveDataCmd[1][35:4], CMD_WR } :
+                                     rActiveDataCmd[1][3:0] == CMD_RDA ? {rActiveDataCmd[1][35:4], CMD_RD } :  36'b0   ;
                 rActiveDataCmd[1] <= rRobLoS==2'b01 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_WRA } :
-                                     rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 35'b0;
+                                     rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 36'b0;
                 plru_bank_row1;
                 rWrCmd            <= 1'b1;
                 rHitBtB           <= 1'b1;  //Hit Back to Back Read or Write
             end else if (rRobBank == rActiveBank[2] && rRobRow == rActiveRow[2]) begin 
-                rWrDataCmd        <= rActiveDataCmd[2][2:0] == CMD_WRA ? {rActiveDataCmd[2][34:3], CMD_WR } :
-                                     rActiveDataCmd[2][2:0] == CMD_RDA ? {rActiveDataCmd[2][34:3], CMD_RD } :  35'b0   ;
+                rWrDataCmd        <= rActiveDataCmd[2][3:0] == CMD_WRA ? {rActiveDataCmd[2][35:4], CMD_WR } :
+                                     rActiveDataCmd[2][3:0] == CMD_RDA ? {rActiveDataCmd[2][35:4], CMD_RD } :  36'b0   ;
                 rActiveDataCmd[2] <= rRobLoS==2'b01 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_WRA } :
-                                     rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 35'b0;
+                                     rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 36'b0;
                 plru_bank_row2;
                 rWrCmd            <= 1'b1;
                 rHitBtB           <= 1'b1;  //Hit Back to Back Read or Write
             end else if (rRobBank == rActiveBank[3] && rRobRow == rActiveRow[3]) begin 
-                rWrDataCmd        <= rActiveDataCmd[3][2:0] == CMD_WRA ? {rActiveDataCmd[3][34:3], CMD_WR } :
-                                     rActiveDataCmd[3][2:0] == CMD_RDA ? {rActiveDataCmd[3][34:3], CMD_RD } :  35'b0   ;
+                rWrDataCmd        <= rActiveDataCmd[3][3:0] == CMD_WRA ? {rActiveDataCmd[3][35:4], CMD_WR } :
+                                     rActiveDataCmd[3][3:0] == CMD_RDA ? {rActiveDataCmd[3][35:4], CMD_RD } :  36'b0   ;
                 rActiveDataCmd[3] <= rRobLoS==2'b01 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_WRA } :
-                                     rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 35'b0;
+                                     rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 36'b0;
                 plru_bank_row3;
                 rWrCmd            <= 1'b1;
                 rHitBtB           <= 1'b1;  //Hit Back to Back Read or Write
@@ -309,25 +369,25 @@ always @(posedge sclk or negedge sresetn) begin
                      rActiveBank[0]    <= rRobBank;
                      rActiveRow[0]     <= rRobRow;
                      rActiveDataCmd[0] <= rRobLoS==2'b01 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_WRA } :
-                                          rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 35'b0;
+                                          rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 36'b0;
                      plru_bank_row0;
                 end else if (rOpenBankRow[1]==2'b00) begin 
                      rActiveBank[1]    <= rRobBank;
                      rActiveRow[1]     <= rRobRow;
                      rActiveDataCmd[1] <= rRobLoS==2'b01 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_WRA } :
-                                          rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 35'b0;
+                                          rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 36'b0;
                      plru_bank_row1;
                 end else if (rOpenBankRow[2]==2'b00) begin 
                      rActiveBank[2]    <= rRobBank;
                      rActiveRow[2]     <= rRobRow;
                      rActiveDataCmd[2] <= rRobLoS==2'b01 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_WRA } :
-                                          rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 35'b0;
+                                          rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 36'b0;
                      plru_bank_row2;
                 end else if (rOpenBankRow[3]==2'b00) begin 
                      rActiveBank[3]    <= rRobBank;
                      rActiveRow[3]     <= rRobRow;
 	             rActiveDataCmd[3] <= rRobLoS==2'b01 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_WRA } :
-	            		      rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 35'b0;
+	            		      rRobLoS==2'b10 ? {rRobDAddr, rRobBank, rRobRow, rRobCol, CMD_RDA } : 36'b0;
                      plru_bank_row3;
                 end
              end
@@ -366,7 +426,7 @@ always @(posedge sclk or negedge sresetn) begin
         end else begin 
              rWrCmd     <= 1'b0;
              rHitBtB    <= 1'b0;  //Not Hit Back to Back Read or Write
-             rWrDataCmd <= 35'b0;
+             rWrDataCmd <= 36'b0;
         end 
     end
 end 
@@ -395,10 +455,12 @@ always @(*) begin
     rMaskCmd  = iQWD_RdData[`CMD_MASK_RANGE];
 end 
 
+reg   rDoRdP;
 //timer controller
 always @(posedge sclk or negedge sresetn) begin 
     if(~sresetn) begin 
         rDoWrP       <= 1'b0;
+        rDoRdP       <= 1'b0;
         rFetchWrData <= 1'b0;
     end else begin 
        if (wRdValidCmd) begin 
@@ -407,10 +469,16 @@ always @(posedge sclk or negedge sresetn) begin
                              rDoWrP       <= 1'b1;
                              rFetchWrData <= 1'b1;
                          end 
+              CMD_RDA :  begin
+                             rDoRdP       <= 1'b1;
+                             rFetchWrData <= 1'b0;
+                         end
            endcase  
        end 
-       if (rCmdDone)
+       if (rCmdDone) begin 
           rDoWrP <= 1'b0;
+          rDoRdP <= 1'b0;
+       end 
     end 
 end 
 reg       rTimerEn; 
@@ -430,11 +498,13 @@ always @(posedge sclk or negedge sresetn) begin
         rDoRefresh   <= timerRefresh > tRC ? 1'b0 : 1'b1;
     end 
 end
-
-
+reg rStartTxn;
+reg rStartCmd;
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
-        rCmd         <= CMD_PRE_ALLBANK;
+        rCmd         <= CMD_NOP;
+        rStartTxn    <= 1'b0;
+        rStartCmd    <= 1'b0;
         rTimerEn     <= 1'b0;
         rTimerInit   <= 4'b0000;
         rTimerCycle  <= 4'b0;
@@ -445,13 +515,28 @@ always @(posedge sclk or negedge sresetn) begin
         rCmdDone     <= 1'b0;
     end else begin 
         ppRdValidCmd <= wRdValidCmd;
-        timer <= rTimerEn ? (rTimerInit ) : 
-                 rDoWrP   ? (timer - 4'b1): 4'b1111; //The default value is 4'b to avoid the timerExpire=1 at first
-        if (rDoWrP & ~timerExpired & rCmd == CMD_PRE_ALLBANK) begin 
-             rTimerEn <= ppRdValidCmd; 
+        timer <= rTimerEn          ? (rTimerInit ) : 
+                 (rDoWrP|rDoRdP)   ? (timer - 4'b1): 4'b1111; 
+        if (rDoPreAllBank) begin 
+             rStartTxn <=1'b0;  
+             rCmd      <= CMD_PRE_ALLBANK;
+        end else if (rDoLoadReg) begin 
+             rStartTxn <=1'b0;  
+             rCmd      <= CMD_LOAD_REG;
+        end else if (~rDoPreAllBank && ~rDoLoadReg && ~rStartTxn) begin 
+             rCmd      <= CMD_NOP;
+             rStartTxn <= 1'b1;
+             rStartCmd <= 1'b1;
+        end else if ((rDoWrP|rDoRdP) & ~timerExpired &rStartCmd & rCmd == CMD_NOP) begin 
+             rTimerEn    <= ppRdValidCmd; 
              rTimerCycle <= rTimerCycle + 4'b1;
              rCmd        <= CMD_ACT;
              rTimerInit  <= tRCD-1;
+             rStartCmd   <= 1'b0;
+        end  else if (rDoRdP & timerExpired & rCmd==CMD_ACT) begin 
+             rCmd        <= CMD_RD;
+             rTimerInit  <= tCAS-1;
+             rTimerEn    <= timerExpired;
         end  else if (rDoWrP & timerExpired & rCmd==CMD_ACT) begin 
              rCmd        <= CMD_WR;
              rTimerInit  <= tWR-1;
@@ -463,11 +548,20 @@ always @(posedge sclk or negedge sresetn) begin
              oQWD_Rd     <= 1'b0;
              rTimerInit  <= tCP-1; 
              rTimerEn    <= timerExpired;
-        end  else if (rDoWrP & timerExpired & rCmd==CMD_NOP) begin 
+        end  else if (rDoRdP & timerExpired & rCmd==CMD_RD) begin
+             rCmd        <= CMD_DATA; 
+             rTimerInit  <= tBL -1;
+             //Add a signal to indicate to read the data
+             rTimerEn    <= timerExpired;
+        end  else if (rDoRdP & timerExpired & rCmd==CMD_DATA) begin
+             rCmd        <= CMD_NOP; 
+             rTimerInit  <= tCP-1; 
+             rTimerEn    <= timerExpired;
+        end  else if ((rDoWrP|rDoRdP) & timerExpired & rCmd==CMD_NOP) begin 
              rCmd        <= CMD_PRE_ONEBANK; 
              rTimerInit  <= tPR-1; 
              rTimerEn    <= timerExpired;
-        end  else if (rDoWrP & timerExpired & rCmd==CMD_PRE_ONEBANK) begin 
+        end  else if ((rDoWrP|rDoRdP) & timerExpired & rCmd==CMD_PRE_ONEBANK) begin 
              rCmd        <= CMD_NOP; 
              rTimerInit  <= 1;
              rTimerEn    <= timerExpired;     
@@ -484,27 +578,15 @@ always @(posedge sclk or negedge sresetn) begin
     end  
 end 
 
-always @(posedge sclk or negedge sresetn) begin 
-    if (~sresetn) begin 
-        oClkEn<= 1'b0;
-        rDq   <= 32'b0;
-        oCsn  <= 1'b1;
-        oRasn <= 1'b1;
-        oCasn <= 1'b1;
-        oWen  <= 1'b0;
-        oDqm  <= 4'b0;
-        oBank <= 2'b0;
-        oAddr <= 10'b0;            
-    end else begin 
-        case (rCmd) 
-            CMD_PRE_ALLBANK: precharge_all_bank(0, hi_z);
-            CMD_PRE_ONEBANK: precharge_bank(rBankCmd, 0, hi_z);
-            CMD_NOP        : nop(0, hi_z);
-            CMD_ACT        : active(rBankCmd, rRowCmd, hi_z);
-            CMD_WR         : write(rBankCmd, rColCmd, rDataCmd, rMaskCmd );
-        endcase
-
-    end 
+always @(*) begin 
+    case (rCmd)
+        CMD_PRE_ALLBANK: precharge_all_bank(0, hi_z);
+        CMD_PRE_ONEBANK: precharge_bank(rBankCmd, 0, hi_z);
+        CMD_LOAD_REG   : load_mode_reg(rBurstMode[10:0]);
+        CMD_NOP        : nop(0, hi_z);
+        CMD_ACT        : active(rBankCmd, rRowCmd, hi_z);
+        CMD_WR         : write(rBankCmd, rColCmd, rDataCmd, rMaskCmd );
+    endcase
 end 
 
 sync_fifo#(.DW(35), .AW(10))  queueCmd (
@@ -526,15 +608,15 @@ task precharge_all_bank;
     input  [3 : 0] dqm_in;
     input [31 : 0] dq_in;
     begin
-        oClkEn<= 1'b1;
-        oCsn  <= 1'b0;
-        oRasn <= 1'b0;
-        oCasn <= 1'b0;
-        oWen  <= 1'b0;
-        oDqm  <= dqm_in;
-        oBank <= 2'b0;
-        oAddr <= 1024;            // A10 = 1
-        rDq   <= dq_in;
+        oClkEn= 1'b1;
+        oCsn  = 1'b0;
+        oRasn = 1'b0;
+        oCasn = 1'b0;
+        oWen  = 1'b0;
+        oDqm  = dqm_in;
+        oBank = 2'b0;
+        oAddr = 1024;            // A10 = 1
+        rDq   = dq_in;
     end
 endtask 
 task precharge_bank;
@@ -542,15 +624,15 @@ task precharge_bank;
     input  [3 : 0] dqm_in;
     input [31 : 0] dq_in;
     begin
-        oClkEn<= 1'b1;
-        oCsn  <= 1'b0;
-        oRasn <= 1'b0;
-        oCasn <= 1'b0;
-        oWen  <= 1'b0;
-        oDqm  <= dqm_in;
-        oBank <= bank; 
-        oAddr <= 1024;            // A10 = 1
-        rDq   <= dq_in;
+        oClkEn= 1'b1;
+        oCsn  = 1'b0;
+        oRasn = 1'b0;
+        oCasn = 1'b0;
+        oWen  = 1'b0;
+        oDqm  = dqm_in;
+        oBank = bank; 
+        oAddr = 1024;            // A10 = 1
+        rDq   = dq_in;
     end
 endtask 
 
@@ -559,14 +641,14 @@ task nop;
     input  [3 : 0] dqm_in;
     input [31 : 0] dq_in;
     begin
-        oClkEn <= 1'b1;
-        oCsn   <= 1'b0;
-        oRasn  <= 1'b1;
-        oCasn  <= 1'b1;
-        oWen   <= 1'b1;
-        oDqm   <= dqm_in;
-        //ba    = 0;
-        //addr  = 0;
+        oClkEn = 1'b1;
+        oCsn   = 1'b0;
+        oRasn  = 1'b1;
+        oCasn  = 1'b1;
+        oWen   = 1'b1;
+        oDqm   = dqm_in;
+        //ba   = 0;
+        //addr = 0;
         rDq    = dq_in;
     end
 endtask
@@ -575,15 +657,15 @@ task active;
     input [10 : 0] row;
     input [31 : 0] dq_in;
     begin
-        oClkEn   <= 1'b1;
-        oCsn     <= 1'b0;
-        oRasn    <= 1'b0;
-        oCasn    <= 1'b1;
-        oWen     <= 1'b1;
-        oDqm     <= 1'b0;
-        oBank    <= bank;
-        oAddr    <= row;
-        rDq      <= dq_in;
+        oClkEn   = 1'b1;
+        oCsn     = 1'b0;
+        oRasn    = 1'b0;
+        oCasn    = 1'b1;
+        oWen     = 1'b1;
+        oDqm     = 1'b0;
+        oBank    = bank;
+        oAddr    = row;
+        rDq      = dq_in;
     end
 endtask
 task write;
@@ -592,18 +674,31 @@ task write;
     input [31 : 0] dq_in;
     input  [3 : 0] dqm_in;
     begin
-        oClkEn   <= 1'b1;
-        oCsn     <= 1'b0;
-        oRasn    <= 1'b1;
-        oCasn    <= 1'b0;
-        oWen     <= 1'b0;
-        oDqm     <= dqm_in;
-        oBank    <= bank;
-        oAddr    <= column;
-        rDq      <= dq_in;
+        oClkEn   = 1'b1;
+        oCsn     = 1'b0;
+        oRasn    = 1'b1;
+        oCasn    = 1'b0;
+        oWen     = 1'b0;
+        oDqm     = dqm_in;
+        oBank    = bank;
+        oAddr    = column;
+        rDq      = dq_in;
     end
 endtask
-
+task load_mode_reg;
+    input [10 : 0] op_code;
+    begin
+        oClkEn   = 1'b1;
+        oCsn     = 1'b0;
+        oRasn    = 1'b0;
+        oCasn    = 1'b0;
+        oWen     = 1'b0;
+        oDqm     = 1'b0;
+        oBank    = 1'b0;
+        oAddr    = op_code;
+        rDq      = hi_z;
+    end
+endtask
 task plru_bank_row0; 
     rOpenBankRow[0] <= 2'b11;
     rOpenBankRow[1] <= rOpenBankRow[1]==2'b00 ? rOpenBankRow[1]: rOpenBankRow[1]-2'b1 ; 
