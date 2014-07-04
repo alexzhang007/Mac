@@ -22,8 +22,10 @@ This module is to interface with sram, dealing with requests coming from MAI and
  Write request to sram is finished, but needs RTL compile pass
 *Jul.01.2014
  Write request to sram is passed with one request. Supporting back to back write(no case has yet verified it). 
-*Jul.01.2014
+*Jul.02.2014
  Read request to sram is passed, but when integrating sdram model to TB, there is x in the input of sdram
+*Jul.04.2014
+ Write request can write data into sram, but read request can only read back one beat. Need support the burst mode 
 
 [1] ORGFXSoC-master/orpsocv2/boards/xilinx/ml501/rtl/verilog/xilinx_ssram.v
 [2] MT48LC2M32B2-512K x 32 x 4banks, Micro. 

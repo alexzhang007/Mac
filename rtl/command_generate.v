@@ -16,10 +16,10 @@
 `define ROB_ROW_RANGE   18:8
 `define ROB_COL_RANGE    7:0
 
-`define CMD_DADDR_RANGE 34:24
-`define CMD_BANK_RANGE  23:22
-`define CMD_ROW_RANGE   21:11
-`define CMD_COL_RANGE   10:3
+`define CMD_DADDR_RANGE 35:25
+`define CMD_BANK_RANGE  24:23
+`define CMD_ROW_RANGE   22:12
+`define CMD_COL_RANGE   11:4
 `define CMD_OP_RANGE     3:0
 `define CMD_DATA_RANGE  35:4
 `define CMD_MASK_RANGE   3:0
@@ -45,6 +45,13 @@ oCasn,
 oWen,
 oDqm
 );
+parameter   DRVCMD_NOP =  0,
+            DRVCMD_PON =  1,
+            DRVCMD_PAL =  2,
+            DRVCMD_WR  =  3,
+            DRVCMD_RD  =  4,
+            DRVCMD_LR  =  5,
+            DRVCMD_ACT =  6; 
 input    sclk;
 input    sresetn;
 input    iROB_Empty;
@@ -132,6 +139,14 @@ reg  [3:0]                 timerROB;
 wire                       wROBExpired ;
 reg                        rDoPreAllBank;
 reg                        rDoLoadReg;
+reg                        rDrivePreAll;
+reg                        rDrivePreOne;
+reg                        rDriveAct;
+reg                        rDriveLR;
+reg                        rDriveNop;
+reg                        rDriveWr;
+reg                        rDriveRd;
+wire [6:0]                 rDriveCmd; 
 
 reg  [31:0]                rBurstMode;
 
@@ -146,7 +161,7 @@ parameter tCAS = 3 ;  //Column Access Strobe latency. Duration between column ac
 parameter tRC  = 15;  //Row cycle. Time duration accesses to different rows in same bank. tRC = tRAS + tRP;
 parameter tCP  = 6 ;  //Colum access to Auto Precharging tCP= tRAS-tRCD-tCAS <Self Define Parameter>
 parameter tCWD = 1 ;  //Column Wite Delay. Time interval between issuuance of column write command and placement of data on data bus by the DRAM controller. Here it is 1 cycle for DDR SDRAM. 
-parameter tLD  = 5;   //LoaD registers into SDRAM
+parameter tLD  = 3;   //LoaD registers into SDRAM
 parameter tBL  = 8;   //Read Data Burst length. 
 
 parameter nFlush = 4;
@@ -184,7 +199,7 @@ assign oDq = rDq;
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
         sCmdRd <= CMDRD_INIT;
-        rBurstMode <= { 24'b0,3'b11,1'b0,1'b0,3'b000};
+        rBurstMode <= { 24'b0,3'b011,1'b0,3'b000};
     end else begin 
         sCmdRd <= nsCmdRd;
     end 
@@ -238,7 +253,7 @@ always @(posedge sclk or negedge sresetn) begin
         timerROB <= (rDoPreAllBank|rDoLoadReg) ? timerROB - 4'b1 : timerROB;
         case (sCmdRd) 
             CMDRD_INIT : begin  //precharging all the banks
-                             timerROB      <= tCBR -1;
+                             timerROB      <= tCBR -2;
                              rDoPreAllBank <= 1'b1;
                              rDoLoadReg    <= 1'b0;
                          end
@@ -247,11 +262,11 @@ always @(posedge sclk or negedge sresetn) begin
                              rDoLoadReg    <= 1'b0;
                          end
             CMDRD_LOAD : begin 
-                             timerROB      <= tLD -1;
+                             timerROB      <= tLD -2;
                              rDoPreAllBank <= 1'b0;
                              rDoLoadReg    <= 1'b1;
                          end 
-            CMDRD_LOAD : begin 
+            CMDRD_LOAD2: begin 
                              rDoPreAllBank <= 1'b0;
                              rDoLoadReg    <= 1'b1;
                          end
@@ -578,14 +593,27 @@ always @(posedge sclk or negedge sresetn) begin
     end  
 end 
 
+assign rDriveCmd = {rDriveAct, rDriveLR, rDriveRd, rDriveWr, rDrivePreAll, rDrivePreOne, rDriveNop};
 always @(*) begin 
-    case (rCmd)
-        CMD_PRE_ALLBANK: precharge_all_bank(0, hi_z);
-        CMD_PRE_ONEBANK: precharge_bank(rBankCmd, 0, hi_z);
-        CMD_LOAD_REG   : load_mode_reg(rBurstMode[10:0]);
-        CMD_NOP        : nop(0, hi_z);
-        CMD_ACT        : active(rBankCmd, rRowCmd, hi_z);
-        CMD_WR         : write(rBankCmd, rColCmd, rDataCmd, rMaskCmd );
+    rDriveAct    = ((rCmd == CMD_ACT        )&& (timer==tRCD-1)) ? 1'b1 : 1'b0;
+    rDriveWr     = ((rCmd == CMD_WR         )&& (timer==tWR-1 )) ? 1'b1 : 1'b0;
+    rDriveRd     = ((rCmd == CMD_RD         )&& (timer==tCAS-1)) ? 1'b1 : 1'b0;
+    rDriveLR     = ((rCmd == CMD_LOAD_REG   )&& (timerROB==0  )) ? 1'b1 : 1'b0;
+    rDrivePreOne = ((rCmd == CMD_PRE_ONEBANK)&& (timer==tPR-1 )) ? 1'b1 : 1'b0;
+    rDrivePreAll = ((rCmd == CMD_PRE_ALLBANK)&& (timerROB==0  )) ? 1'b1 : 1'b0;
+    rDriveNop    = ( rCmd == CMD_NOP) ? 1'b1 : 1'b0;
+end 
+
+always @(*) begin 
+    case (1)
+       rDriveCmd[DRVCMD_PAL]: precharge_all_bank(0, hi_z);
+       rDriveCmd[DRVCMD_PON]: precharge_bank(rBankCmd, 0, hi_z);
+       rDriveCmd[DRVCMD_LR ]: load_mode_reg(rBurstMode[10:0]);
+       rDriveCmd[DRVCMD_NOP]: nop(0, hi_z);
+       rDriveCmd[DRVCMD_ACT]: active(rBankCmd, rRowCmd, hi_z);
+       rDriveCmd[DRVCMD_WR ]: write(rBankCmd, rColCmd, rDataCmd, ~rMaskCmd );  //Notice, mask is ~ value
+       rDriveCmd[DRVCMD_RD ]: read (rBankCmd, rColCmd, hi_z, 4'b0);
+       default : nop(0, hi_z);
     endcase
 end 
 
@@ -611,7 +639,7 @@ task precharge_all_bank;
         oClkEn= 1'b1;
         oCsn  = 1'b0;
         oRasn = 1'b0;
-        oCasn = 1'b0;
+        oCasn = 1'b1;
         oWen  = 1'b0;
         oDqm  = dqm_in;
         oBank = 2'b0;
@@ -627,7 +655,7 @@ task precharge_bank;
         oClkEn= 1'b1;
         oCsn  = 1'b0;
         oRasn = 1'b0;
-        oCasn = 1'b0;
+        oCasn = 1'b1;
         oWen  = 1'b0;
         oDqm  = dqm_in;
         oBank = bank; 
@@ -685,6 +713,25 @@ task write;
         rDq      = dq_in;
     end
 endtask
+task read;
+    input  [1 : 0] bank;
+    input [10 : 0] column;
+    input [31 : 0] dq_in;
+    input  [3 : 0] dqm_in;
+    begin
+        oClkEn = 1'b1;
+        oCsn   = 1'b0;
+        oRasn  = 1'b1;
+        oCasn  = 1'b0;
+        oWen   = 1'b1;
+        oDqm   = dqm_in;
+        oBank  = bank;
+        oAddr  = column;
+        rDq    = dq_in;
+    end
+endtask
+
+
 task load_mode_reg;
     input [10 : 0] op_code;
     begin

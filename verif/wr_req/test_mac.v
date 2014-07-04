@@ -32,6 +32,15 @@ wire         wMAC_ReadyWr;
 reg  [31:0]  rMAC_DataWr;
 reg  [3:0]   rMAC_MaskWr;
 reg          rMAC_EoD;
+wire [31:0]  wDq;
+wire [10:0]  wAddr;
+wire [1:0]   wBank;
+wire         wClkEn;
+wire         wCsn;
+wire         wRasn;
+wire         wCasn;
+wire         wWen;
+wire [3:0]   wDqm;
 
 mem_access_controller  Mac(
   .clk(clk),
@@ -62,16 +71,28 @@ mem_access_controller  Mac(
   .iMAC_DataWr(rMAC_DataWr),
   .iMAC_MaskWr(rMAC_MaskWr),
   .iMAC_EoD(rMAC_EoD),
-  .ioDq(),
-  .oAddr(),
-  .oBank(),
-  .oCsn(),
-  .oRasn(),
-  .oWen(),
-  .oDqm()
+  .ioDq(wDq),
+  .oAddr(wAddr),
+  .oClkEn(wClkEn),
+  .oBank(wBank),
+  .oCsn(wCsn),
+  .oRasn(wRasn),
+  .oCasn(wCasn),
+  .oWen(wWen),
+  .oDqm(wDqm)
 );
-
-
+mt48lc2m32b2 Sdram0 (
+  .Dq(wDq),
+  .Addr(wAddr),
+  .Ba(wBank),
+  .Clk(clk333),
+  .Cke(wClkEn),
+  .Cs_n(wCsn),
+  .Ras_n(wRasn),
+  .Cas_n(wCasn),
+  .We_n(wWen),
+  .Dqm(wDqm)
+);
 
 initial begin 
     basic;
@@ -176,11 +197,11 @@ task  drive_sim;
             //@(posedge clk);
             @(posedge clk);
             rMAC_DataWr    = 32'hABCD_EF12;
-            rMAC_MaskWr    = 4'b1101;
+            rMAC_MaskWr    = 4'b1111;
             rMAC_EoD       = 1'b0;
             @(posedge clk);
             rMAC_DataWr    = 32'hCBCD_EF12;
-            rMAC_MaskWr    = 4'b1011;
+            rMAC_MaskWr    = 4'b1111;
             rMAC_EoD       = 1'b1;
             @(posedge clk);
             rMAC_DataWr    = 32'h0;
@@ -188,7 +209,7 @@ task  drive_sim;
             rMAC_EoD       = 1'b0;
         end
     join
-    repeat (100) @(posedge clk);
+    repeat (1000) @(posedge clk);
 
     ->end_sim_evt;
 endtask 
