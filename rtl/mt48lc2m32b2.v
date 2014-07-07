@@ -136,8 +136,8 @@ module mt48lc2m32b2 (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
     `define   LMR       7
 
     // Timing Parameters for -6 CL3
-    parameter tAC  =   5.5;
-    parameter tHZ  =   5.5;
+    parameter tAC  =   3.334; //5.5;
+    parameter tHZ  =   3.334; //5.5;
     parameter tOH  =   2.5;
     parameter tMRD =   2.0;     //2 Clk Cycles
     parameter tRAS =  12.0;

@@ -244,6 +244,14 @@ wire                       wROB_ItemValid3;
 wire [4:0]                 wRdAddr1;
 wire [35:0]                wRdData1;
 wire                       wRd1;
+wire                       wDataRspBurstS;
+wire                       wDataRspBurstE;
+reg                        rWr3;
+reg                        rRd3;
+reg  [31:0]                rWrData3;
+wire [31:0]                wRdData3;
+wire                       wFull3;
+wire                       wEmpty;
 
 
 
@@ -626,11 +634,49 @@ always @(posedge sclk) begin
     oCasn <= wCasn;
     oWen  <= wWen;
     oDqm  <= wDqm;
-    rDq   <= wDq;
 end 
-assign ioDq = rDq;
+assign ioDq = wDq;
 
 assign wSelA = (wRdValid0|wRdValid2)? rRoundRobin : 2'b0 ;
+
+//FSM for RdDataRsp
+reg [1:0] sRdData;
+reg [1:0] nsRdData;
+parameter RD_IDLE = 2'b00,
+          RD_DATA = 2'b01;
+ 
+
+always @(posedge sclk or negedge resetn ) begin 
+    if (~resetn) begin 
+        ppDataRspBurstE <= 1'b0;
+        sRdData         <= RD_IDLE;
+    end else begin 
+        ppDataRspBurstE <=  wDataRspBurstE;
+        sRdData         <= nsRdData;
+    end 
+end 
+always @(*) begin
+     nsRdData = sRdData;
+     case (sRdData)
+         RD_IDLE : begin 
+                       if (wDataRspBurstS) 
+                           nsRdData = RD_DATA;
+                       else 
+                           nsRdData = RD_IDLE;
+                   end 
+         RD_DATA : begin 
+                       if (ppDataRspBurstE)
+                           nsRdData = RD_IDLE;
+                       else 
+                           nsRdData = RD_DATA;
+                   end 
+     endcase
+end 
+
+always @(*) begin 
+    rWr3     = (nsRdData == RD_DATA) ? 1'b1 : 1'b0;
+    rWrData3 = (nsRdData == Rd_DATA) ? wDq ? 32'b0;
+end 
 
 mux_4 #(.DATA_WIDTH(45)) muxFourA (
   .iZeroBranch(45'b0),
@@ -718,7 +764,7 @@ command_generate CMD_Gen (
   .oQWD_Rd(wRd1), //Rd QueueWriteData
   .oQWD_RdAddr(wRdAddr1), 
   .iQWD_RdData(wRdData1),
-  .oDq(wDq),
+  .ioDq(wDq),
   .oClkEn(wClkEn),
   .oAddr(wAddr),
   .oBank(wBank),
@@ -726,7 +772,9 @@ command_generate CMD_Gen (
   .oRasn(wRasn),
   .oCasn(wCasn),
   .oWen(wWen),
-  .oDqm(wDqm)
+  .oDqm(wDqm),
+  .oDataRspBurstS(wDataRspBurstS),
+  .oDataRspBurstE(wDataRspBurstE)
 );
 
 sync_fifo #(.DW(45), .AW(5) ) queueWrReq (
@@ -767,6 +815,18 @@ sync_fifo #(.DW(45), .AW(5) ) queueRdReq (
   .rempty(wEmpty2)
 );
 
+async_fifo #(.DW(32), .AW(32)) queueRdDataRsp (
+  .wclk(sclk),
+  .wrst_n(resetn),
+  .wr(rWr3),
+  .rclk(clk),
+  .rrst_n(resetn),
+  .rd(rRd3),
+  .wdata(rWrData3),
+  .rdata(wRdData3),
+  .wfull(wFull3),
+  .rempty(wEmpty3)
+);
 
 mux_4 #(.DATA_WIDTH(1)) muxFourB (
   .iZeroBranch(wROB_WayWr0),

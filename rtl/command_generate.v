@@ -35,7 +35,7 @@ iROB_RdData,
 oQWD_Rd,
 oQWD_RdAddr,
 iQWD_RdData,
-oDq,
+ioDq,
 oClkEn,
 oAddr,
 oBank,
@@ -43,7 +43,9 @@ oCsn,
 oRasn,
 oCasn,
 oWen,
-oDqm
+oDqm,
+oDataRspBurstS,
+oDataRspBurstE
 );
 parameter   DRVCMD_NOP =  0,
             DRVCMD_PON =  1,
@@ -61,7 +63,7 @@ input    iROB_RdData;
 output   oQWD_Rd;
 output   oQWD_RdAddr;
 input    iQWD_RdData;
-output   oDq;
+inout    ioDq;
 output   oClkEn;
 output   oAddr;
 output   oBank;
@@ -70,6 +72,8 @@ output   oRasn;
 output   oCasn;
 output   oWen;
 output   oDqm;
+output   oDataRspBurstS;
+output   oDataRspBurstE;
 
 wire                       iROB_Empty;
 wire                       iROB_Full;
@@ -78,7 +82,7 @@ wire [`ROB_ITEM_W-1:0]     iROB_RdData;
 reg                        oQWD_Rd;
 reg  [4:0]                 oQWD_RdAddr;
 wire [35:0]                iQWD_RdData;
-wire [31:0]                oDq;
+wire [31:0]                ioDq;
 reg  [31:0]                rDq;
 reg  [10:0]                oAddr;
 reg  [1 :0]                oBank;
@@ -90,6 +94,8 @@ reg                        oWen;
 reg  [3:0]                 oDqm;
 reg  [2:0]                 sCmdRd;
 reg  [2:0]                 nsCmdRd;
+wire                       oDataRspBurstS;
+wire                       oDataRspBurstE;
 
 //Only Four precharged Bank-Row
 reg  [1:0]                 rActiveBank[0:3];
@@ -147,6 +153,16 @@ reg                        rDriveNop;
 reg                        rDriveWr;
 reg                        rDriveRd;
 wire [6:0]                 rDriveCmd; 
+reg                        rDoRdP;
+reg                        rTimerEn; 
+reg [3:0]                  rTimerInit;
+reg [3:0]                  rTimerCycle;
+reg                        ppRdValidCmd; 
+reg                        rDoRefresh;
+reg                        rStartTxn;
+reg                        rStartCmd;
+reg                        rDriveBurstS;
+reg                        rDriveBurstE;
 
 reg  [31:0]                rBurstMode;
 
@@ -193,13 +209,13 @@ parameter CMDRD_WAIT = 3'b011;
 parameter CMDRD_ACK  = 3'b010;
 
 
-assign oDq = rDq;
+assign ioDq = rDq;
 
 //Logic to control the popped data from ROB
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
         sCmdRd <= CMDRD_INIT;
-        rBurstMode <= { 24'b0,3'b011,1'b0,3'b000};
+        rBurstMode <= { 24'b10,3'b011,1'b0,3'b011}; //Single Write and Burst Read
     end else begin 
         sCmdRd <= nsCmdRd;
     end 
@@ -470,7 +486,6 @@ always @(*) begin
     rMaskCmd  = iQWD_RdData[`CMD_MASK_RANGE];
 end 
 
-reg   rDoRdP;
 //timer controller
 always @(posedge sclk or negedge sresetn) begin 
     if(~sresetn) begin 
@@ -496,11 +511,6 @@ always @(posedge sclk or negedge sresetn) begin
        end 
     end 
 end 
-reg       rTimerEn; 
-reg [3:0] rTimerInit;
-reg [3:0] rTimerCycle;
-reg       ppRdValidCmd; 
-reg       rDoRefresh;
 
 //Auto Refresh timer logic
 assign timerExpiredRefresh = ~(|timerRefresh);
@@ -513,8 +523,8 @@ always @(posedge sclk or negedge sresetn) begin
         rDoRefresh   <= timerRefresh > tRC ? 1'b0 : 1'b1;
     end 
 end
-reg rStartTxn;
-reg rStartCmd;
+
+
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
         rCmd         <= CMD_NOP;
@@ -592,6 +602,8 @@ always @(posedge sclk or negedge sresetn) begin
         end 
     end  
 end 
+assign oDataRspBurstS = rDriveBurstS;
+assign oDataRspBurstE = rDriveBurstE;
 
 assign rDriveCmd = {rDriveAct, rDriveLR, rDriveRd, rDriveWr, rDrivePreAll, rDrivePreOne, rDriveNop};
 always @(*) begin 
@@ -601,8 +613,11 @@ always @(*) begin
     rDriveLR     = ((rCmd == CMD_LOAD_REG   )&& (timerROB==0  )) ? 1'b1 : 1'b0;
     rDrivePreOne = ((rCmd == CMD_PRE_ONEBANK)&& (timer==tPR-1 )) ? 1'b1 : 1'b0;
     rDrivePreAll = ((rCmd == CMD_PRE_ALLBANK)&& (timerROB==0  )) ? 1'b1 : 1'b0;
+    rDriveBurstS = ((rCmd == CMD_DATA       )&& (timer==tBL-1 )) ? 1'b1 : 1'b0;
+    rDriveBurstE = ((rCmd == CMD_DATA       )&& (timer==0     )) ? 1'b1 : 1'b0;
     rDriveNop    = ( rCmd == CMD_NOP) ? 1'b1 : 1'b0;
 end 
+
 
 always @(*) begin 
     case (1)
@@ -616,6 +631,10 @@ always @(*) begin
        default : nop(0, hi_z);
     endcase
 end 
+
+//Collect the Read Data
+
+
 
 sync_fifo#(.DW(35), .AW(10))  queueCmd (
   .clk(sclk),
