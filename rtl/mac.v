@@ -138,6 +138,7 @@ reg                        oCasn;
 reg                        oWen;
 reg  [3:0]                 oDqm;
 wire [31:0]                wDq;
+wire [31:0]                wRdDq;
 reg  [31:0]                rDq;
 wire                       wClkEn;
 wire [10:0]                wAddr;
@@ -251,7 +252,7 @@ reg                        rRd3;
 reg  [31:0]                rWrData3;
 wire [31:0]                wRdData3;
 wire                       wFull3;
-wire                       wEmpty;
+wire                       wEmpty3;
 
 
 
@@ -635,7 +636,8 @@ always @(posedge sclk) begin
     oWen  <= wWen;
     oDqm  <= wDqm;
 end 
-assign ioDq = wDq;
+assign ioDq  = wDq;
+assign wRdDq = ioDq;
 
 assign wSelA = (wRdValid0|wRdValid2)? rRoundRobin : 2'b0 ;
 
@@ -643,9 +645,10 @@ assign wSelA = (wRdValid0|wRdValid2)? rRoundRobin : 2'b0 ;
 reg [1:0] sRdData;
 reg [1:0] nsRdData;
 parameter RD_IDLE = 2'b00,
-          RD_DATA = 2'b01;
+          RD_DATA = 2'b01,
+          RD_BURST= 2'b10;
  
-
+reg   ppDataRspBurstE;
 always @(posedge sclk or negedge resetn ) begin 
     if (~resetn) begin 
         ppDataRspBurstE <= 1'b0;
@@ -674,9 +677,73 @@ always @(*) begin
 end 
 
 always @(*) begin 
-    rWr3     = (nsRdData == RD_DATA) ? 1'b1 : 1'b0;
-    rWrData3 = (nsRdData == Rd_DATA) ? wDq ? 32'b0;
+    rWr3     = (sRdData == RD_DATA) ? 1'b1   : 1'b0;
+    rWrData3 = (sRdData == RD_DATA) ? wRdDq  : 32'b0;
 end 
+//Logic for poping data
+reg [3:0] rRspDataCounter;
+reg [1:0] sRtData;
+reg [1:0] nsRtData;
+
+always @(posedge clk or negedge resetn ) begin 
+    if (~resetn) begin 
+        sRtData <= RD_IDLE;
+    end else begin 
+        sRtData <= nsRtData;
+    end
+end 
+
+always @(*) begin 
+    nsRtData = sRtData;
+    case (sRtData) 
+        RD_IDLE  : begin 
+                       if (~wEmpty3 && ppDataRspBurstE)
+                          nsRtData = RD_DATA;
+                       else 
+                          nsRtData = RD_IDLE;
+                   end 
+        RD_DATA  : begin 
+                       nsRtData = RD_BURST;
+                   end  
+        RD_BURST : begin
+                       if (rRspDataCounter == 4'b0)
+                          nsRtData = RD_IDLE;
+                       else 
+                          nsRtData = RD_BURST;
+                   end 
+    endcase 
+end 
+
+always @(posedge clk or negedge resetn ) begin 
+    if (~resetn) begin 
+        rRd3            <= 1'b0;
+        rRspDataCounter <= 4'h0;
+        oMAC_ValidRsp   <= 1'b0;
+        oMAC_EoD        <= 1'b0;
+        oMAC_DataRsp    <= 32'b0;
+    end else begin 
+        case (sRtData ) 
+            RD_IDLE : begin 
+                          rRd3            <= 1'b0;
+                          oMAC_EoD        <= 1'b0;
+                          oMAC_ValidRsp   <= 1'b0;
+                          oMAC_DataRsp    <= 32'b0;
+                      end 
+            RD_DATA : begin 
+                          rRd3            <= 1'b0;
+                          rRspDataCounter <= 4'h8;
+                      end 
+            RD_BURST: begin 
+                          rRd3            <= rRspDataCounter == 4'b0 ? 1'b0 : 1'b1;
+                          oMAC_ValidRsp   <= rRspDataCounter == 4'h8 ? 1'b1 : 1'b0;
+                          oMAC_EoD        <= rRspDataCounter == 4'b1 ? 1'b1 : 1'b0;
+                          oMAC_DataRsp    <= wRdData3;
+                          rRspDataCounter <= rRspDataCounter -4'b1;
+                      end
+        endcase
+    end 
+end 
+
 
 mux_4 #(.DATA_WIDTH(45)) muxFourA (
   .iZeroBranch(45'b0),
@@ -815,7 +882,7 @@ sync_fifo #(.DW(45), .AW(5) ) queueRdReq (
   .rempty(wEmpty2)
 );
 
-async_fifo #(.DW(32), .AW(32)) queueRdDataRsp (
+async_fifo #(.DW(32), .AW(7)) queueRdDataRsp (
   .wclk(sclk),
   .wrst_n(resetn),
   .wr(rWr3),

@@ -29,6 +29,12 @@
 *
 * Rev  Author          Date        Changes
 * ---  --------------------------  ---------------------------------------
+* 2.2  SH              08/07/2014  - tOH bug tmp fix.
+*      Mac Team 
+*      When Data_out_enable is 0, there is a tOH delay, and Data_out_enable is 1, there a tAC delay. 
+*      tOH < tAC, there is only one cyle (tAC=tHZ) delay.
+*      For the 8th data, it depends on the tOH to drive the Dq_reg. But the output cannot be received by queueRdDataRsp. 
+*      Here for the model fix, add the Burst_count
 * 2.1  SH              06/06/2002  - Typo in bank multiplex
 *      Micron Technology Inc.
 *
@@ -137,8 +143,8 @@ module mt48lc2m32b2 (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
 
     // Timing Parameters for -6 CL3
     parameter tAC  =   3.334; //5.5;
-    parameter tHZ  =   3.334; //5.5;
-    parameter tOH  =   2.5;
+    parameter tHZ  =   3.334;//3.334; //5.5;
+    parameter tOH  =   2.5; //???Why
     parameter tMRD =   2.0;     //2 Clk Cycles
     parameter tRAS =  12.0;
     parameter tRC  =  15.0;
@@ -1047,22 +1053,22 @@ module mt48lc2m32b2 (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
 
             // Data Counter
             if (Burst_length_1 == 1'b1) begin
-                if (Burst_counter >= 1) begin
+                if (Burst_counter >= 1+1) begin
                     Data_in_enable = 1'b0;
                     Data_out_enable = 1'b0;
                 end
             end else if (Burst_length_2 == 1'b1) begin
-                if (Burst_counter >= 2) begin
+                if (Burst_counter >= 2+1) begin
                     Data_in_enable = 1'b0;
                     Data_out_enable = 1'b0;
                 end
             end else if (Burst_length_4 == 1'b1) begin
-                if (Burst_counter >= 4) begin
+                if (Burst_counter >= 4+1) begin
                     Data_in_enable = 1'b0;
                     Data_out_enable = 1'b0;
                 end
             end else if (Burst_length_8 == 1'b1) begin
-                if (Burst_counter >= 8) begin
+                if (Burst_counter >= 8+1) begin
                     Data_in_enable = 1'b0;
                     Data_out_enable = 1'b0;
                 end

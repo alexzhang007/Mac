@@ -26,7 +26,12 @@ This module is to interface with sram, dealing with requests coming from MAI and
  Read request to sram is passed, but when integrating sdram model to TB, there is x in the input of sdram
 *Jul.04.2014
  Write request can write data into sram, but read request can only read back one beat. Need support the burst mode 
-*Jul.07.2014
- Add the RdDataRsp logic 
+*Jul.08.2014
+ Write request has bug again for the changing the FSM logic sending out wrreq.  No daily RTL update.
+*Jul.09.2014
+ Rewrite the FSM of sending DDR request to SDRAM. Single write and read request is passed. But there is risk bug about the model.
+
+
+
 [1] ORGFXSoC-master/orpsocv2/boards/xilinx/ml501/rtl/verilog/xilinx_ssram.v
 [2] MT48LC2M32B2-512K x 32 x 4banks, Micro. 

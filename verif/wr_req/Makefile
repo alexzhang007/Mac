@@ -14,10 +14,10 @@ all:simv
 $(TGT): $(SRC) 
 	rm out -rf
 	mkdir out
-	$(VCS) -sverilog $(FLAGS) $^ +define+DUMPFSDB  -sgq int
+	$(VCS) -sverilog $(FLAGS) $^ +define+DUMPFSDB  -sgq short 
 run:
 	/proj/caeeda/SYNOPSYS/bin/simv -sgq short -licwait 100
 seewave:
-	$(VERDI) -f run.f -top test -ssf ./out/mac.fsdb -sgq int -background
+	$(VERDI) -f run.f -top test -ssf ./out/mac.fsdb -sgq short -background
 clean:
 	rm simv; rm csrc -rf; rm *.daidir -rf; rm out -rf; rm verdiLog -rf; rm vcs.log; rm novas.*; rm ucli.key

@@ -21,7 +21,7 @@
 `define CMD_ROW_RANGE   22:12
 `define CMD_COL_RANGE   11:4
 `define CMD_OP_RANGE     3:0
-`define CMD_DATA_RANGE  35:4
+`define CMD_RDDATA_RANGE  35:4
 `define CMD_MASK_RANGE   3:0
 
 
@@ -53,7 +53,8 @@ parameter   DRVCMD_NOP =  0,
             DRVCMD_WR  =  3,
             DRVCMD_RD  =  4,
             DRVCMD_LR  =  5,
-            DRVCMD_ACT =  6; 
+            DRVCMD_ACT =  6, 
+            DRVCMD_WRD =  7; 
 input    sclk;
 input    sresetn;
 input    iROB_Empty;
@@ -104,6 +105,7 @@ reg  [`ROW_W-1:0]          rActiveRow[0:3];
 reg  [1:0]                 rOpenBankRow[0:3];
 reg                        rROB_Valid;
 reg  [3:0]                 rCmd;
+reg  [3:0]                 rNextCmd;
 reg  [2:0]                 rPrevCmd;
 wire [`ROB_ITEM_W-1:0]     pp0ROB_RdData;
 wire [`ROB_ITEM_W-1:0]     pp1ROB_RdData;
@@ -142,9 +144,10 @@ reg  [4:0]                 rFlushTimer;
 wire                       wFlushExpired ;
 reg                        rCmdDone;
 reg  [3:0]                 timerROB;
-wire                       wROBExpired ;
 reg                        rDoPreAllBank;
 reg                        rDoLoadReg;
+reg                        rDonePreAllBank;
+reg                        rDoneLoadReg;
 reg                        rDrivePreAll;
 reg                        rDrivePreOne;
 reg                        rDriveAct;
@@ -152,9 +155,9 @@ reg                        rDriveLR;
 reg                        rDriveNop;
 reg                        rDriveWr;
 reg                        rDriveRd;
-wire [6:0]                 rDriveCmd; 
+wire [7:0]                 rDriveCmd; 
 reg                        rDoRdP;
-reg                        rTimerEn; 
+wire                       wTimerEn; 
 reg [3:0]                  rTimerInit;
 reg [3:0]                  rTimerCycle;
 reg                        ppRdValidCmd; 
@@ -163,6 +166,9 @@ reg                        rStartTxn;
 reg                        rStartCmd;
 reg                        rDriveBurstS;
 reg                        rDriveBurstE;
+reg                        rDoPreOneBank;
+reg                        rDoneWr;
+reg                        rDoneRd;
 
 reg  [31:0]                rBurstMode;
 
@@ -171,7 +177,7 @@ parameter tWR  = 2;
 parameter tRFC = 4686; 
 parameter tCBR = 9 ;  //CAS Before RAS, AutoRefresh duration is 9 cycles. 
 parameter tRRD = 3 ;  //Row to Row active delay is 10ns, NA in this version   
-parameter tRCD = 3;   //Row Activation duration is 10ns. 
+parameter tRCD = 3 ;  //Row Activation duration is 10ns. 
 parameter tRAS = 12;  //Row active to Auto Precharging 40ns;  
 parameter tCAS = 3 ;  //Column Access Strobe latency. Duration between column access command and data return by DRAM device. Also known as tCL
 parameter tRC  = 15;  //Row cycle. Time duration accesses to different rows in same bank. tRC = tRAS + tRP;
@@ -196,7 +202,9 @@ parameter CMD_WR          = 4'b0011;
 parameter CMD_WRA         = 4'b0111;
 parameter CMD_RDA         = 4'b0110;
 parameter CMD_SELF_REFRESH= 4'b0111;
-parameter CMD_DATA        = 4'b1000;
+parameter CMD_RDDATA        = 4'b1000;
+parameter CMD_WRDATA      = 4'b1001;
+parameter CMD_DELAY       = 4'b1010;
 parameter CMD_LOAD_REG    = 4'b1111;
 
 parameter CMDRD_INIT = 3'b100;
@@ -215,7 +223,7 @@ assign ioDq = rDq;
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
         sCmdRd <= CMDRD_INIT;
-        rBurstMode <= { 24'b10,3'b011,1'b0,3'b011}; //Single Write and Burst Read
+        rBurstMode <= { 24'b100,3'b011,1'b0,3'b011}; //Single Write and Burst Read
     end else begin 
         sCmdRd <= nsCmdRd;
     end 
@@ -224,22 +232,10 @@ always @(*) begin
     nsCmdRd = sCmdRd;
     case (sCmdRd) 
         CMDRD_INIT : begin 
-                         nsCmdRd = CMDRD_INIT2;
-                     end
-        CMDRD_INIT2: begin 
-                         if (wROBExpired)
-                             nsCmdRd = CMDRD_LOAD;
-                         else 
-                             nsCmdRd = CMDRD_INIT2;
+                             nsCmdRd = CMDRD_ACK;
                      end
         CMDRD_LOAD : begin 
-                         nsCmdRd = CMDRD_LOAD2;
-                     end
-        CMDRD_LOAD2: begin 
-                         if (wROBExpired)
-                             nsCmdRd = CMDRD_IDLE;
-                         else 
-                             nsCmdRd = CMDRD_LOAD2;
+                             nsCmdRd = CMDRD_ACK;
                      end
         CMDRD_IDLE : begin 
                          if (~iROB_Empty )
@@ -251,12 +247,17 @@ always @(*) begin
                          nsCmdRd = CMDRD_ACK; //ACK is needed since the Empty is holden for 3 cycles
                      end
         CMDRD_ACK  : begin 
+                         if (rDonePreAllBank)  
+                             nsCmdRd = CMDRD_LOAD;
+                         else if (rDoneLoadReg) 
                              nsCmdRd = CMDRD_IDLE;
+                         else if ((rDoWrP|rDoRdP) &rCmdDone) 
+                             nsCmdRd = CMDRD_IDLE;
+                         else 
+                             nsCmdRd = CMDRD_ACK;
                      end 
     endcase 
 end 
-
-assign wROBExpired = ~(|timerROB) ;
 
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
@@ -266,26 +267,15 @@ always @(posedge sclk or negedge sresetn) begin
             rDoPreAllBank <= 1'b0;
             rDoLoadReg    <= 1'b0;
     end else begin 
-        timerROB <= (rDoPreAllBank|rDoLoadReg) ? timerROB - 4'b1 : timerROB;
         case (sCmdRd) 
             CMDRD_INIT : begin  //precharging all the banks
-                             timerROB      <= tCBR -2;
-                             rDoPreAllBank <= 1'b1;
-                             rDoLoadReg    <= 1'b0;
-                         end
-            CMDRD_INIT2: begin  //precharging all the banks
                              rDoPreAllBank <= 1'b1;
                              rDoLoadReg    <= 1'b0;
                          end
             CMDRD_LOAD : begin 
-                             timerROB      <= tLD -2;
                              rDoPreAllBank <= 1'b0;
                              rDoLoadReg    <= 1'b1;
                          end 
-            CMDRD_LOAD2: begin 
-                             rDoPreAllBank <= 1'b0;
-                             rDoLoadReg    <= 1'b1;
-                         end
             CMDRD_IDLE : begin   
                              oROB_Rd       <= 1'b0;
                              rROB_Valid    <= 1'b0;
@@ -299,6 +289,8 @@ always @(posedge sclk or negedge sresetn) begin
             CMDRD_ACK  : begin 
                              oROB_Rd       <= 1'b0;
                              rROB_Valid    <= 1'b0;
+                             rDoPreAllBank <= 1'b0;
+                             rDoLoadReg    <= 1'b0;
                          end 
         endcase 
     end 
@@ -482,7 +474,7 @@ always @(*) begin
     rRowCmd   = wRdDataCmd[`CMD_ROW_RANGE];
     rColCmd   = wRdDataCmd[`CMD_COL_RANGE];
     rDAddrCmd = wRdDataCmd[`CMD_DADDR_RANGE]; 
-    rDataCmd  = iQWD_RdData[`CMD_DATA_RANGE];
+    rDataCmd  = iQWD_RdData[`CMD_RDDATA_RANGE];
     rMaskCmd  = iQWD_RdData[`CMD_MASK_RANGE];
 end 
 
@@ -505,10 +497,12 @@ always @(posedge sclk or negedge sresetn) begin
                          end
            endcase  
        end 
-       if (rCmdDone) begin 
+       if (rDoneWr) begin 
           rDoWrP <= 1'b0;
-          rDoRdP <= 1'b0;
        end 
+       if (rDoneRd) begin
+           rDoRdP <= 1'b0;
+       end
     end 
 end 
 
@@ -524,100 +518,137 @@ always @(posedge sclk or negedge sresetn) begin
     end 
 end
 
+assign wTimerEn    = timerExpired | ppRdValidCmd; 
+
 
 always @(posedge sclk or negedge sresetn) begin 
     if (~sresetn) begin 
-        rCmd         <= CMD_NOP;
-        rStartTxn    <= 1'b0;
-        rStartCmd    <= 1'b0;
-        rTimerEn     <= 1'b0;
-        rTimerInit   <= 4'b0000;
-        rTimerCycle  <= 4'b0;
-        timer        <= 4'b0;
-        ppRdValidCmd <= 1'b0;
-        oQWD_Rd      <= 1'b0;
-        oQWD_RdAddr  <= 5'b0;
-        rCmdDone     <= 1'b0;
+        rCmd            <= CMD_NOP;
+        rStartTxn       <= 1'b0;
+        rStartCmd       <= 1'b0;
+        rTimerInit      <= 4'b0000;
+        rTimerCycle     <= 4'b0;
+        timer           <= 4'b0;
+        ppRdValidCmd    <= 1'b0;
+        oQWD_Rd         <= 1'b0;
+        oQWD_RdAddr     <= 5'b0;
+        rCmdDone        <= 1'b0;
+        rDonePreAllBank <= 1'b0;
+        rDoPreOneBank   <= 1'b0;
+        rDoneLoadReg    <= 1'b0;
+        rDoneWr         <= 1'b0;
+        rDoneRd         <= 1'b0;
     end else begin 
-        ppRdValidCmd <= wRdValidCmd;
-        timer <= rTimerEn          ? (rTimerInit ) : 
-                 (rDoWrP|rDoRdP)   ? (timer - 4'b1): 4'b1111; 
-        if (rDoPreAllBank) begin 
-             rStartTxn <=1'b0;  
-             rCmd      <= CMD_PRE_ALLBANK;
-        end else if (rDoLoadReg) begin 
-             rStartTxn <=1'b0;  
-             rCmd      <= CMD_LOAD_REG;
-        end else if (~rDoPreAllBank && ~rDoLoadReg && ~rStartTxn) begin 
-             rCmd      <= CMD_NOP;
-             rStartTxn <= 1'b1;
-             rStartCmd <= 1'b1;
-        end else if ((rDoWrP|rDoRdP) & ~timerExpired &rStartCmd & rCmd == CMD_NOP) begin 
-             rTimerEn    <= ppRdValidCmd; 
-             rTimerCycle <= rTimerCycle + 4'b1;
-             rCmd        <= CMD_ACT;
-             rTimerInit  <= tRCD-1;
-             rStartCmd   <= 1'b0;
-        end  else if (rDoRdP & timerExpired & rCmd==CMD_ACT) begin 
-             rCmd        <= CMD_RD;
-             rTimerInit  <= tCAS-1;
-             rTimerEn    <= timerExpired;
-        end  else if (rDoWrP & timerExpired & rCmd==CMD_ACT) begin 
-             rCmd        <= CMD_WR;
-             rTimerInit  <= tWR-1;
-             rTimerEn    <= timerExpired;
-             oQWD_Rd     <= timerExpired;
-             oQWD_RdAddr <= rColCmd[6:2];
-        end  else if (rDoWrP & timerExpired & rCmd==CMD_WR) begin
-             rCmd        <= CMD_NOP; 
-             oQWD_Rd     <= 1'b0;
-             rTimerInit  <= tCP-1; 
-             rTimerEn    <= timerExpired;
-        end  else if (rDoRdP & timerExpired & rCmd==CMD_RD) begin
-             rCmd        <= CMD_DATA; 
-             rTimerInit  <= tBL -1;
-             //Add a signal to indicate to read the data
-             rTimerEn    <= timerExpired;
-        end  else if (rDoRdP & timerExpired & rCmd==CMD_DATA) begin
-             rCmd        <= CMD_NOP; 
-             rTimerInit  <= tCP-1; 
-             rTimerEn    <= timerExpired;
-        end  else if ((rDoWrP|rDoRdP) & timerExpired & rCmd==CMD_NOP) begin 
-             rCmd        <= CMD_PRE_ONEBANK; 
-             rTimerInit  <= tPR-1; 
-             rTimerEn    <= timerExpired;
-        end  else if ((rDoWrP|rDoRdP) & timerExpired & rCmd==CMD_PRE_ONEBANK) begin 
-             rCmd        <= CMD_NOP; 
-             rTimerInit  <= 1;
-             rTimerEn    <= timerExpired;     
-             rCmdDone    <= timerExpired;     
-        end  else if (rDoRefresh) begin
-             rCmd        <= CMD_SELF_REFRESH;
-             rTimerInit  <= tCBR-1;
-             rTimerEn    <= timerExpired; //? 
-        end else begin 
-             rTimerEn    <= 1'b0;
-             rCmdDone    <= 1'b0;
-             oQWD_Rd     <= 1'b0;
-        end 
+        case (rCmd) 
+           CMD_NOP        : begin 
+                                rDonePreAllBank <= 1'b0;
+                                rDoneLoadReg    <= 1'b0;
+                                rCmdDone        <= 1'b0;
+                                if (rDoPreAllBank) begin 
+                                    rNextCmd <= CMD_PRE_ALLBANK;
+                                    rCmd     <= CMD_DELAY;
+                                    timer    <= tPR -1;
+                                end else if (rDoPreOneBank) begin 
+                                    rNextCmd <= CMD_PRE_ONEBANK;
+                                    rCmd     <= CMD_DELAY;
+                                    timer    <= tPR -1;
+                                end else if (rDoLoadReg) begin 
+                                    rNextCmd <= CMD_LOAD_REG;
+                                    rCmd     <= CMD_DELAY;
+                                    timer    <= tLD -1;
+                                end else if (rDoWrP) begin 
+                                    rNextCmd <= CMD_ACT;
+                                    rCmd     <= CMD_DELAY;
+                                    timer    <= tRCD -1;
+                                end else if (rDoRdP) begin 
+                                    rNextCmd <= CMD_ACT;
+                                    rCmd     <= CMD_DELAY;
+                                    timer    <= tRCD -1;
+                                end 
+                            end 
+           CMD_PRE_ALLBANK: begin 
+                               rDonePreAllBank <= 1'b1;
+                               rCmd            <= CMD_NOP;
+                               rNextCmd        <= CMD_NOP;
+                               rCmdDone        <= 1'b0;
+                            end 
+           CMD_PRE_ONEBANK: begin 
+                               rDoPreOneBank   <= 1'b0;
+                               rCmd            <= CMD_NOP;
+                               rNextCmd        <= CMD_NOP;
+                               rCmdDone        <= 1'b0;
+                            end 
+           CMD_LOAD_REG   : begin 
+                               rDoneLoadReg    <= 1'b1;
+                               rCmd            <= CMD_NOP;
+                               rNextCmd        <= CMD_NOP;
+                               rCmdDone        <= 1'b0;
+                            end 
+           CMD_ACT        : begin 
+                               rCmdDone        <= 1'b0;
+                               rCmd            <= CMD_DELAY;
+                               rNextCmd        <= rDoWrP ? CMD_WRA : rDoRdP ? CMD_RDA : CMD_NOP;
+                               timer           <= rDoWrP ? tWR-1   : rDoRdP ? tCAS-1  : 4'hf; 
+                            end 
+           CMD_WRA        : begin 
+                               rCmdDone        <= 1'b0;
+                               rCmd            <= CMD_DELAY;
+                               rNextCmd        <= CMD_NOP;
+                               rDoneWr         <= 1'b1;
+                               rDoPreOneBank   <= 1'b1;
+                               timer           <= tCP-1;
+                            end 
+           CMD_RDA        : begin 
+                               rCmdDone        <= 1'b0;
+                               rCmd            <= CMD_DELAY;
+                               rNextCmd        <= CMD_RDDATA;
+                               rDoneRd         <= 1'b1;
+                               rDoPreOneBank   <= 1'b1;
+                               timer           <= tBL;
+                            end 
+           CMD_RDDATA     : begin 
+                               rCmdDone        <= 1'b0;
+                               rCmd            <= CMD_DELAY;
+                               rNextCmd        <= CMD_NOP;
+                               rDoPreOneBank   <= 1'b1;
+                               timer           <= tCP-1;
+                            end
+           CMD_DELAY      : begin 
+                               rDoneWr         <= 1'b0;
+                               rDoneRd         <= 1'b0;
+                               timer <= timer -4'b1;
+                               if (timer==4'b001) begin
+                                   rCmdDone <= 1'b1;
+                                   rCmd     <= rNextCmd;
+                               end else begin
+                                   rCmdDone <= 1'b0;
+                                   rCmd     <= CMD_DELAY;
+                               end 
+                            end 
+        endcase
+        oQWD_Rd         <= (rDoWrP && (rNextCmd ==CMD_ACT) && (timer== tRCD-1)) ? 1'b1 : 1'b0;
+        oQWD_RdAddr     <= rColCmd[6:2];
     end  
 end 
-assign oDataRspBurstS = rDriveBurstS;
-assign oDataRspBurstE = rDriveBurstE;
 
-assign rDriveCmd = {rDriveAct, rDriveLR, rDriveRd, rDriveWr, rDrivePreAll, rDrivePreOne, rDriveNop};
+reg rDriveWrData;
+
+assign rDriveCmd = {rDriveWrData,rDriveAct, rDriveLR, rDriveRd, rDriveWr, rDrivePreAll, rDrivePreOne, rDriveNop};
 always @(*) begin 
-    rDriveAct    = ((rCmd == CMD_ACT        )&& (timer==tRCD-1)) ? 1'b1 : 1'b0;
-    rDriveWr     = ((rCmd == CMD_WR         )&& (timer==tWR-1 )) ? 1'b1 : 1'b0;
-    rDriveRd     = ((rCmd == CMD_RD         )&& (timer==tCAS-1)) ? 1'b1 : 1'b0;
-    rDriveLR     = ((rCmd == CMD_LOAD_REG   )&& (timerROB==0  )) ? 1'b1 : 1'b0;
-    rDrivePreOne = ((rCmd == CMD_PRE_ONEBANK)&& (timer==tPR-1 )) ? 1'b1 : 1'b0;
-    rDrivePreAll = ((rCmd == CMD_PRE_ALLBANK)&& (timerROB==0  )) ? 1'b1 : 1'b0;
-    rDriveBurstS = ((rCmd == CMD_DATA       )&& (timer==tBL-1 )) ? 1'b1 : 1'b0;
-    rDriveBurstE = ((rCmd == CMD_DATA       )&& (timer==0     )) ? 1'b1 : 1'b0;
-    rDriveNop    = ( rCmd == CMD_NOP) ? 1'b1 : 1'b0;
+    rDriveAct    = ((rNextCmd == CMD_ACT        )&& (timer==tRCD-1)) ? 1'b1 : 1'b0;
+    rDriveWr     = ((rNextCmd == CMD_WRA        )&& (timer==tWR-1 )) ? 1'b1 : 1'b0;
+    rDriveWrData = ((rNextCmd == CMD_WRA        )&& (timer==0     )) ? 1'b1 : 1'b0;
+    rDriveRd     = ((rNextCmd == CMD_RDA        )&& (timer==tCAS-1)) ? 1'b1 : 1'b0;
+    rDriveLR     = ((rNextCmd == CMD_LOAD_REG   )&& (timer==tLD-1 )) ? 1'b1 : 1'b0;
+    rDrivePreOne = ((rNextCmd == CMD_PRE_ONEBANK)&& (timer==tPR-1 )) ? 1'b1 : 1'b0;
+    rDrivePreAll = ((rNextCmd == CMD_PRE_ALLBANK)&& (timer==tPR-1 )) ? 1'b1 : 1'b0;
+    rDriveBurstS = ((rNextCmd == CMD_RDDATA     )&& (timer==tBL-1 )) ? 1'b1 : 1'b0;
+    rDriveBurstE = ((rNextCmd == CMD_RDDATA     )&& (timer==0     )) ? 1'b1 : 1'b0;
+    rDriveNop    = ( rNextCmd == CMD_NOP        )                    ? 1'b1 : 1'b0;
 end 
 
+assign oDataRspBurstS = rDriveBurstS;
+assign oDataRspBurstE = rDriveBurstE;
 
 always @(*) begin 
     case (1)
@@ -626,8 +657,9 @@ always @(*) begin
        rDriveCmd[DRVCMD_LR ]: load_mode_reg(rBurstMode[10:0]);
        rDriveCmd[DRVCMD_NOP]: nop(0, hi_z);
        rDriveCmd[DRVCMD_ACT]: active(rBankCmd, rRowCmd, hi_z);
-       rDriveCmd[DRVCMD_WR ]: write(rBankCmd, rColCmd, rDataCmd, ~rMaskCmd );  //Notice, mask is ~ value
-       rDriveCmd[DRVCMD_RD ]: read (rBankCmd, rColCmd, hi_z, 4'b0);
+       rDriveCmd[DRVCMD_WR ]: write(rBankCmd, rColCmd);  
+       rDriveCmd[DRVCMD_RD ]: read (rBankCmd, rColCmd, hi_z, 4'b0);//Notice, mask is ~ value
+       rDriveCmd[DRVCMD_WRD]: write_data(rDataCmd, ~rMaskCmd);
        default : nop(0, hi_z);
     endcase
 end 
@@ -718,20 +750,31 @@ endtask
 task write;
     input  [1 : 0] bank;
     input [10 : 0] column;
-    input [31 : 0] dq_in;
-    input  [3 : 0] dqm_in;
     begin
         oClkEn   = 1'b1;
         oCsn     = 1'b0;
         oRasn    = 1'b1;
         oCasn    = 1'b0;
         oWen     = 1'b0;
-        oDqm     = dqm_in;
         oBank    = bank;
         oAddr    = column;
+    end
+endtask
+task write_data;
+    input [31 : 0] dq_in;
+    input  [3 : 0] dqm_in;
+    begin
+        oClkEn   = 1'b1;
+        oCsn     = 1'b0;
+        oRasn    = 1'b1;
+        oCasn    = 1'b1;
+        oWen     = 1'b1;
+        oDqm     = dqm_in;
         rDq      = dq_in;
     end
 endtask
+
+
 task read;
     input  [1 : 0] bank;
     input [10 : 0] column;
